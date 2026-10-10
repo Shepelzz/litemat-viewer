@@ -16,9 +16,12 @@ renderer.shadowMap.autoUpdate=false; // redrawn only when its frustum or the geo
 view.appendChild(renderer.domElement);
 const BG=new THREE.Color('#f3ede0');
 const scene=new THREE.Scene(); scene.background=BG;
-const camera=new THREE.OrthographicCamera(-1,1,1,-1,1,600);
+// narrow-angle perspective: reads almost like isometric, but far parts shrink a little, so long buildings don't
+// seem to flare out towards the back (the "reverse perspective" illusion of a true orthographic view)
+const FOV=18, TAN=Math.tan(THREE.MathUtils.degToRad(FOV/2));
+const camera=new THREE.PerspectiveCamera(FOV,1,1,1000);
 const controls=new OrbitControls(camera,renderer.domElement);
-controls.enableDamping=true; controls.maxPolarAngle=Math.PI*0.48; controls.minZoom=0.5; controls.maxZoom=6;
+controls.enableDamping=true; controls.maxPolarAngle=Math.PI*0.48;
 // mouse/trackpad: drag (left button / trackpad click) moves the map, right button / two-finger click rotates.
 // touch screens keep the OrbitControls default: one finger rotates, two fingers pinch-zoom and pan
 controls.mouseButtons={LEFT:THREE.MOUSE.PAN,MIDDLE:THREE.MOUSE.DOLLY,RIGHT:THREE.MOUSE.ROTATE};
@@ -33,15 +36,27 @@ renderer.domElement.addEventListener('wheel',e=>{
   e.preventDefault();e.stopImmediatePropagation();
   const dy=e.deltaY*(e.deltaMode===1?33:e.deltaMode===2?400:1);
   const f=Math.exp(-THREE.MathUtils.clamp(dy*(e.ctrlKey?0.01:0.0015),-0.5,0.5));
-  const z=THREE.MathUtils.clamp(camera.zoom*f,controls.minZoom,controls.maxZoom);if(z===camera.zoom)return;
-  const r=renderer.domElement.getBoundingClientRect(),n=new THREE.Vector3((e.clientX-r.left)/r.width*2-1,-(e.clientY-r.top)/r.height*2+1,0);
-  const p0=n.clone().unproject(camera);camera.zoom=z;camera.updateProjectionMatrix();
-  const d=p0.sub(n.unproject(camera));camera.position.add(d);controls.target.add(d);
+  const dist=camera.position.distanceTo(controls.target);
+  const k=THREE.MathUtils.clamp(dist/f,controls.minDistance,controls.maxDistance)/dist;if(Math.abs(k-1)<1e-6)return;
+  // scale camera and target about the point under the cursor (on the target's depth plane), so that point stays put
+  const r=renderer.domElement.getBoundingClientRect(),n=new THREE.Vector3((e.clientX-r.left)/r.width*2-1,-(e.clientY-r.top)/r.height*2+1,0.5);
+  const fwd=new THREE.Vector3();camera.getWorldDirection(fwd);
+  const ray=n.unproject(camera).sub(camera.position).normalize();
+  const P=camera.position.clone().addScaledVector(ray,controls.target.clone().sub(camera.position).dot(fwd)/ray.dot(fwd));
+  camera.position.sub(P).multiplyScalar(k).add(P);controls.target.sub(P).multiplyScalar(k).add(P);
   controls.update();invalidate();
 },{passive:false,capture:true});
-// orbit around what you're looking at: on each gesture, slide the pivot along the view axis onto the
-// first solid block (ortho camera, so the picture doesn't move), instead of spinning around the model's middle
-controls.addEventListener('start',()=>{const p=surfaceAtCenter();if(!p)return;const d=p.sub(controls.target);controls.target.add(d);camera.position.add(d);});
+// pivot for each gesture, always on the view axis (so the picture doesn't jump): while the whole model is in view,
+// the axis point nearest to the model's centre (it turns in place); zoomed in, the first solid block on the axis
+controls.addEventListener('start',()=>{
+  if(!loaded)return;
+  const fwd=new THREE.Vector3();camera.getWorldDirection(fwd);
+  const C=new THREE.Vector3(0,SHADOW.H/2,0),dist=camera.position.distanceTo(controls.target);
+  let p=null;
+  if(SHADOW.rad/(dist*TAN)<1.3)p=camera.position.clone().addScaledVector(fwd,Math.max(1,C.clone().sub(camera.position).dot(fwd)));
+  else p=surfaceAtCenter();
+  if(p)controls.target.copy(p);
+});
 scene.add(new THREE.AmbientLight(0xfff4e6,0.66));
 const sun=new THREE.DirectionalLight(0xfff3e0,0.36);
 sun.castShadow=true; sun.shadow.mapSize.set(2048,2048);
@@ -60,14 +75,15 @@ function frameModel(){
   if(disc){scene.remove(disc);disc.geometry.dispose();}
   disc=new THREE.Mesh(new THREE.CylinderGeometry(R,R,0.4,96),toon({color:'#efe6d2'}));disc.position.y=-0.2;disc.receiveShadow=true;scene.add(disc);
   const S=Math.max(R,H);
-  SHADOW.H=H;SHADOW.S=S;
+  SHADOW.H=H;SHADOW.S=S;SHADOW.rad=Math.hypot(R,H/2);
   // big builds get a denser shadow map on desktops; the shadow frustum itself follows the view (fitShadow)
   const ms=(S>64&&finePointer.matches&&renderer.capabilities.maxTextureSize>=8192)?4096:2048;
   if(sun.shadow.mapSize.x!==ms){sun.shadow.mapSize.set(ms,ms);sun.shadow.map?.dispose();sun.shadow.map=null;}
   controls.target.set(0,H*0.42,0);
   VIEW.ext=viewExtents(H,R,H*0.42);
-  camera.zoom=1;post.uniforms.depthScale.value=S*12+99;camera.position.set(VIEW.dir[0]*S*5,VIEW.dir[1]*S*5+H*0.42,VIEW.dir[2]*S*5);camera.far=S*12+100;
   resize();
+  camera.position.copy(controls.target).addScaledVector(new THREE.Vector3(...VIEW.dir).normalize(),VIEW.fitDist);
+  controls.update();invalidate();
 }
 function inst(geo,mat,items,fn){const im=new THREE.InstancedMesh(geo,mat,Math.max(items.length,1));im.count=items.length;
   items.forEach((it,i)=>{const [m,c]=fn(it);im.setMatrixAt(i,m);if(c)im.setColorAt(i,c);});im.castShadow=im.receiveShadow=true;return im;}
@@ -174,25 +190,31 @@ async function rebuild(p0=0,p1=1){
 }
 
 const rtColor=new THREE.WebGLRenderTarget(1,1,{samples:4});
+// three r147 gives a multisampled target a 16-bit depth buffer unless it has a depth texture; with a perspective
+// camera that z-fights up close, so attach one to get DEPTH_COMPONENT24
+rtColor.depthTexture=new THREE.DepthTexture(1,1);
 const rtNormal=new THREE.WebGLRenderTarget(1,1); rtNormal.depthTexture=new THREE.DepthTexture(1,1);
 const normalMat=new THREE.MeshNormalMaterial();
 const post=new THREE.ShaderMaterial({
   uniforms:{tColor:{value:rtColor.texture},tNormal:{value:rtNormal.texture},tDepth:{value:rtNormal.depthTexture},
-    res:{value:new THREE.Vector2(1,1)},px:{value:1},depthScale:{value:599},ink:{value:new THREE.Color('#4a3a30')},lines:{value:1},dThr:{value:.55},lw:{value:1},ia:{value:1}},
+    res:{value:new THREE.Vector2(1,1)},px:{value:1},cn:{value:1},cf:{value:1000},ink:{value:new THREE.Color('#4a3a30')},lines:{value:1},dThr:{value:.55},lw:{value:1},ia:{value:1}},
   vertexShader:`varying vec2 vUv;void main(){vUv=uv;gl_Position=vec4(position.xy,0.,1.);}`,
   fragmentShader:`
-    uniform sampler2D tColor,tNormal,tDepth;uniform vec2 res;uniform float px,depthScale,lines,dThr,lw,ia;uniform vec3 ink;varying vec2 vUv;
-    float D(vec2 uv){return texture2D(tDepth,uv).x*depthScale;}
+    uniform sampler2D tColor,tNormal,tDepth;uniform vec2 res;uniform float px,cn,cf,lines,dThr,lw,ia;uniform vec3 ink;varying vec2 vUv;
+    // inverse view depth: linear across the screen on any plane in a perspective view
+    float W(vec2 uv){float z=texture2D(tDepth,uv).x*2.-1.;return (cf+cn-z*(cf-cn))/(2.*cn*cf);}
     vec3 N(vec2 uv){return texture2D(tNormal,uv).xyz*2.-1.;}
     float h(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}
     void main(){
       vec3 c=texture2D(tColor,vUv).rgb; vec2 p=vUv*res;
       vec2 wob=vec2(sin(p.y*0.045+sin(p.x*0.013)*2.),cos(p.x*0.05+sin(p.y*0.011)*2.))*0.35*lw/res;
-      vec2 uv=vUv+wob, o=lw/res;
-      // second difference: 0 on any flat surface however steeply it's viewed (a first difference grows at grazing
-      // angles and flickers per triangle near the threshold, e.g. stripes across the plinth's fan triangles)
-      float d0=2.*D(uv);
-      float d=abs(D(uv+vec2(o.x,0))+D(uv-vec2(o.x,0))-d0)+abs(D(uv+vec2(0,o.y))+D(uv-vec2(0,o.y))-d0);
+      // depth/normal targets are sampled nearest: snap to a texel centre and step a whole number of texels each way,
+      // so the samples are symmetric. With a fractional offset they snap unevenly and, on a surface seen almost
+      // edge-on, the depth slope itself reads as an edge (inked stripes across the plinth at low camera angles)
+      vec2 uv=(floor((vUv+wob)*res)+.5)/res, o=max(1.,floor(lw+.5))/res;
+      // second difference of 1/z: 0 on any flat surface however steeply it's viewed; ×z² turns it back into depth units
+      float w0=W(uv),z0=1./w0;
+      float d=(abs(W(uv+vec2(o.x,0))+W(uv-vec2(o.x,0))-2.*w0)+abs(W(uv+vec2(0,o.y))+W(uv-vec2(0,o.y))-2.*w0))*z0*z0;
       float n=length(N(uv+vec2(o.x,0))-N(uv-vec2(o.x,0)))+length(N(uv+vec2(0,o.y))-N(uv-vec2(0,o.y)));
       float e=max(smoothstep(dThr,dThr*1.6,d),smoothstep(0.5,0.9,n))*lines;
       c=mix(c,ink,clamp(e,0.,1.)*0.92*ia);
@@ -236,13 +258,16 @@ function resize(){
     const open=!(w<=560&&$('panel').classList.contains('collapsed'));
     const T=hdr+12,B=open&&w>860?24:72,L=open&&w>860?322:16,Rm=16;
     const aw=Math.max(50,w-L-Rm),ah=Math.max(50,h-T-B);
-    const k=Math.max((e.u1-e.u0)/aw,(e.v1-e.v0)/ah)*1.04;
+    // world units per CSS px at the target's depth that fit the model into the free area (+ a bit for perspective)
+    const k=Math.max((e.u1-e.u0)/aw,(e.v1-e.v0)/ah)*1.1;
     VIEW.area={x:L,y:T,w:aw,h:ah};
-    const uL=(e.u0+e.u1)/2-(L+aw/2)*k,vT=(e.v0+e.v1)/2+(T+ah/2)*k;
-    camera.left=uL;camera.right=uL+w*k;camera.top=vT;camera.bottom=vT-h*k;
-    // let any model be zoomed in to ~48 CSS px per block (small ones keep the old 6× limit)
-    controls.maxZoom=Math.max(6,48*k);
-  }else{const a=w/h,fh=VIEW.fh;camera.left=-fh*a/2;camera.right=fh*a/2;camera.top=fh/2;camera.bottom=-fh/2;}
+    VIEW.fitDist=h*k/2/TAN;
+    // lens shift: put the orbit target where the model's centre has to be for it to sit in the middle of the free area
+    const cx=L+aw/2-(e.u0+e.u1)/2/k, cy=T+ah/2+(e.v0+e.v1)/2/k;
+    camera.aspect=w/h;camera.setViewOffset(w,h,w/2-cx,h/2-cy,w,h);
+    // zoom range: from 2.5× the framed distance down to ~48 CSS px per block
+    controls.minDistance=Math.min(VIEW.fitDist,h/48/2/TAN);controls.maxDistance=VIEW.fitDist*2.5;
+  }else{camera.aspect=w/h;camera.clearViewOffset();}
   camera.updateProjectionMatrix();
   renderer.setSize(w,h,false);
   const dw=Math.floor(w*renderer.getPixelRatio()),dh=Math.floor(h*renderer.getPixelRatio());
@@ -260,20 +285,19 @@ async function loadModel(m,label){
 // ===== Shadow frustum follows the view =====
 // One map stretched over a 400-block build leaves ~3 texels per block. Instead, cover only what is on screen:
 // the 4 screen-corner rays, clipped to the model's box, projected into light space; snapped to texels to avoid shimmer.
-const SHADOW={H:1,S:1};
+const SHADOW={H:1,S:1,rad:1};
 const SUN_DIR=new THREE.Vector3(-0.45,0.8,0.55).normalize();
 const L_F=SUN_DIR.clone().negate(),L_R=new THREE.Vector3().crossVectors(L_F,new THREE.Vector3(0,1,0)).normalize(),L_U=new THREE.Vector3().crossVectors(L_R,L_F);
 const _o=new THREE.Vector3(),_d=new THREE.Vector3(),_p=new THREE.Vector3(),_c=new THREE.Vector3();
 let shHalf=0,shKey='';
 function fitShadow(){
   const bx=M.NX/2+1,bz=M.NZ/2+1,H=SHADOW.H+1,S=SHADOW.S;
-  camera.getWorldDirection(_d);
   let u0=1e9,u1=-1e9,v0=1e9,v1=-1e9,w0=1e9,w1=-1e9,hit=0;
   const add=p=>{const u=p.dot(L_R),v=p.dot(L_U),w=p.dot(L_F);u0=Math.min(u0,u);u1=Math.max(u1,u);v0=Math.min(v0,v);v1=Math.max(v1,v);w0=Math.min(w0,w);w1=Math.max(w1,w);hit++;};
   // model box corners that are on screen (covers the zoomed-out case where screen corners miss the model)
-  for(const x of[-bx,bx])for(const y of[-1,H])for(const z of[-bz,bz]){_p.set(x,y,z);const n=_p.clone().project(camera);if(Math.abs(n.x)<=1&&Math.abs(n.y)<=1)add(_p);}
+  for(const x of[-bx,bx])for(const y of[-1,H])for(const z of[-bz,bz]){_p.set(x,y,z);const n=_p.clone().project(camera);if(Math.abs(n.x)<=1&&Math.abs(n.y)<=1&&Math.abs(n.z)<=1)add(_p);}
   for(const sx of[-1,0,1])for(const sy of[-1,0,1]){
-    _o.set(sx,sy,-1).unproject(camera);
+    _o.set(sx,sy,-1).unproject(camera);_d.set(sx,sy,1).unproject(camera).sub(_o).normalize(); // perspective: per-corner ray
     // slab-clip the ray against the model box (y from -1 to H, x/z from -b to b)
     let t0=-1e9,t1=1e9;
     for(const [o,d,lo,hi] of [[_o.x,_d.x,-bx,bx],[_o.y,_d.y,-1,H],[_o.z,_d.z,-bz,bz]]){
@@ -306,9 +330,14 @@ function fitShadow(){
   draw();
 })();
 function draw(){
+  if(loaded){ // depth range hugging the model: precise depth for the outline pass
+    const dc=camera.position.distanceTo(_c.set(0,SHADOW.H/2,0)),R=SHADOW.rad+2;
+    camera.near=Math.max(0.5,dc-R);camera.far=dc+R;camera.updateProjectionMatrix();
+    post.uniforms.cn.value=camera.near;post.uniforms.cf.value=camera.far;
+  }
   { // line weight follows on-screen block size: thin & faint when blocks are tiny, a bit bolder up close
     const pr=renderer.getPixelRatio(), hpx=view.clientHeight||1;
-    const ppb=hpx*camera.zoom/(camera.top-camera.bottom);   // CSS pixels per block
+    const ppb=hpx/(2*TAN*camera.position.distanceTo(controls.target));   // CSS pixels per block at the target
     post.uniforms.lw.value=pr*THREE.MathUtils.clamp(Math.pow(ppb/14,0.85),0.4,1.6);
     post.uniforms.ia.value=THREE.MathUtils.clamp((ppb-2.5)/8,0.12,1);
     post.uniforms.dThr.value=Math.max(0.55,5/ppb*post.uniforms.lw.value/pr); }

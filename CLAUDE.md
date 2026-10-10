@@ -15,7 +15,8 @@ Static web app: drop a `.litematic` file → toon-shaded, ink-outlined 3D illust
    (stairs → sloped wedges incl. inner/outer corners, slabs, panes, fences, walls, trapdoors, doors, leaves → blobs, …),
    colour lookup (`colors.json` + name fallbacks), automatic ground cut (`computeCut`; computed but not applied — the UI always shows the full schematic, `M.CUT=0`).
 3. `greedy.js` — greedy meshing of full cubes (merges coplanar same-colour faces).
-4. `main.js` — three.js scene: MeshToonMaterial (3-step gradient), shadows, ortho camera, OrbitControls,
+4. `main.js` — three.js scene: MeshToonMaterial (3-step gradient), shadows, narrow 18° perspective camera
+   (lens-shifted via `setViewOffset` to centre the model in the area free of header/panel), OrbitControls,
    post-process outline pass (depth + normal edges, line weight scales with on-screen block size), UI + progress.
 5. `history.js` — recently opened files in IndexedDB (file bytes + JPEG thumbnail, last 20, id = SHA-256 prefix);
    header model name is the switcher. `localStorage.lastOpened` picks the model shown on start (else the demo).
@@ -29,8 +30,11 @@ Static web app: drop a `.litematic` file → toon-shaded, ink-outlined 3D illust
 - Shadow map: `renderer.shadowMap.autoUpdate=false`; `fitShadow()` fits the shadow frustum to what's on screen and
   sets `needsUpdate` only when that frustum changes.
 - Render size capped at ~5 MP (`resize()`), since every frame is 3 full-screen passes.
-- Controls: mouse/trackpad left drag = pan, right drag = rotate; touch: one finger = rotate, two = pinch/pan; orbit pivot snaps to the block surface on
-  the camera axis at the start of each gesture (`surfaceAtCenter`).
+- Controls: mouse/trackpad left drag = pan, right drag = rotate; touch: one finger = rotate, two = pinch/pan.
+  Zoom = camera distance (wheel zoom is ours, anchored at the cursor). Pivot is set at each gesture start on the
+  camera axis: nearest point to the model centre while the whole model is in view, else `surfaceAtCenter()`.
+- Outline pass: near/far hug the model every frame; edges use the second difference of 1/z (zero on any plane),
+  sampled at texel centres with whole-texel offsets. `rtColor` has a depth texture only to get a 24-bit depth buffer.
 - Dev only: `window.viewer` = {controls, camera, M, renderer, sun, scene, styled, invalidate, surfaceAtCenter, draw}.
 
 ## Social preview
