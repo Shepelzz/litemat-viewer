@@ -1,15 +1,19 @@
 # Litematica → иллюстрация
 
-Перетаскиваешь `.litematic` — получаешь рисованную 3D-модель постройки: мультяшный свет, контуры «тушью», ортографическая камера. Всё считается в браузере, файл никуда не отправляется.
+Перетаскиваешь `.litematic` — получаешь рисованную 3D-модель постройки: мультяшный свет, контуры «тушью». Всё считается в браузере; на сервер файл попадает, только если нажать «Поделиться».
 
 ## Запуск локально
 
-Нужен Node.js 18+.
+Нужен Node.js 22+.
 
 ```bash
 npm install
 npm run dev        # http://localhost:5173
+npm run api        # сервер «Поделиться» на :5231 (vite проксирует /api); без MySQL кнопка просто скрыта
 ```
+
+Запускать из папки проекта (терминал или npm-конфигурация IDE с `litematica-viewer/package.json`).
+Если порт 5173 занят, `npm run dev` остановится с ошибкой — значит, там уже висит другой dev-сервер, его надо остановить.
 
 Продакшн-сборка:
 
@@ -22,22 +26,26 @@ npm run preview    # проверить сборку: http://localhost:4173
 
 ## Деплой
 
-**GitHub Pages (проще всего).** Запушь репозиторий на GitHub в ветку `main`, затем Settings → Pages → Source: *GitHub Actions*. Workflow `.github/workflows/deploy.yml` соберёт и выложит сайт при каждом пуше.
+**Render — Web Service** (нужен для «Поделиться»; статический сайт API не запустит):
 
-**Свой сервер через Docker:**
+- Build Command: `npm ci && npm run build`
+- Start Command: `npm start`
+- Environment: `DATABASE_URL=mysql://user:pass@host:3306/db` (или `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`/`DB_NAME`),
+  при необходимости `DB_SSL=true`; `SITE_URL=https://<адрес сайта>` для превью ссылок.
 
-```bash
-docker build -t litematica-viewer .
-docker run -d -p 8080:80 --name litematica-viewer litematica-viewer   # http://<сервер>:8080
-```
+Таблицы создаются сами при старте (миграции в `server/migrations.js`, всё с префиксом `litemat_app_`), в логе:
+`🗄  MySQL подключён…`. Нет переменных или база недоступна — сайт работает, кнопки «Поделиться» нет.
 
-**Любой хостинг статики** (nginx, Netlify, Cloudflare Pages, Vercel): команда сборки `npm run build`, папка `dist`.
+**Только просмотр, без «Поделиться»** — любой хостинг статики (GitHub Pages через `.github/workflows/deploy.yml`,
+Render Static Site, Netlify…): команда сборки `npm run build`, папка `dist`.
+
+**Docker:** `docker build -t litematica-viewer . && docker run -d -p 8080:8080 -e DATABASE_URL=… litematica-viewer`
 
 ## Как пользоваться
 
 1. В игре: Litematica → выделить область → `M` → Area Editor → Save Schematic.
 2. Файл лежит в `.minecraft/schematics/`. Перетащи его на страницу.
-3. «Срез снизу» убирает подземную часть (подбирается автоматически), «Как в игре» показывает исходные кубы.
+3. «Как в игре» показывает исходные кубы. «Поделиться» сохраняет файл на сервере и даёт ссылку `/?s=<id>`.
 
 ## Обновить цвета блоков под новую версию
 
@@ -56,5 +64,7 @@ src/convert.js     правила «блок → геометрия», цвет�
 src/greedy.js      склейка граней
 src/main.js        сцена three.js, toon-шейдинг, контуры, интерфейс
 src/progress.js    прогресс-бар без зависаний вкладки
+src/history.js     недавние файлы в IndexedDB
+server/            Express: раздаёт dist/ и API ссылок; MySQL, миграции
 public/sample.litematic   пример для кнопки «Открыть пример»
 ```

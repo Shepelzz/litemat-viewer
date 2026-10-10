@@ -381,11 +381,11 @@ function startProgress(label){
 }
 function stopProgress(){invalidate();PROG.on=null;document.body.classList.remove('loading');for(const b of document.querySelectorAll('button,input'))b.disabled=false;}
 // ===== File loading UI =====
-const fileIn=$('file'), dlg=$('openDlg');
+const fileIn=$('file'), dlg=$('openDlg'), panel=$('panel');
 const finePointer=matchMedia('(pointer:fine)');
 function showErr(t){const el=dlg.open?$('msg3'):document.body.classList.contains('has-model')?$('msg2'):$('msg');el.className='msg err';el.textContent=t;}
 function clearErr(){$('msg').textContent='';$('msg2').textContent='';$('msg3').textContent='';}
-// src: {demo:true} | {id} (from history) | {} (a new file → saved to history)
+// src: {demo:true} | {id} (from history) | {} (a new file → saved to history); + shareId if it has a public link
 async function openBuffer(buf,label,src={}){
   clearErr();startProgress(label);
   let m;
@@ -393,14 +393,16 @@ async function openBuffer(buf,label,src={}){
   catch(e){console.error(e);showErr(e.message||'Не удалось прочитать файл');return false;}
   finally{stopProgress();}
   document.body.classList.toggle('is-demo',!!src.demo);
-  $('crumb').textContent=src.demo?'Demo':label;
+  $('crumb').textContent=src.demo?'Demo':label;$('title').textContent=label; // project name (renamable), not the name inside the file
   const thumb=thumbnail();
+  CUR_BUF=buf;CUR_NAME=label;CUR_SHARE=src.shareId||null;
   if(src.demo){CUR='demo';DEMO.thumb=thumb||DEMO.thumb;try{localStorage.setItem('demoThumb',DEMO.thumb||'');}catch{}}
   else{
     CUR=src.id||await hist.fileId(buf);
-    try{await hist.save({id:CUR,name:label,dims:`${M.NX}×${M.NY}×${M.NZ}`,author:m.author||'',thumb,data:buf});}
+    try{await hist.save({id:CUR,name:label,dims:`${M.NX}×${M.NY}×${M.NZ}`,author:m.author||'',thumb,data:buf,...(src.shareId?{shareId:src.shareId}:{})});}
     catch(e){console.warn('history not saved',e);}
   }
+  setShareUrl(src.shareId||null);
   try{localStorage.setItem('lastOpened',CUR);}catch{}
   return true;
 }
@@ -420,7 +422,7 @@ dlg.addEventListener('click',e=>{if(e.target===dlg)dlg.close();});
 $('dlgZone').onclick=()=>fileIn.click();
 $('dlgZone').onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();fileIn.click();}};
 fileIn.onchange=()=>{openFile(fileIn.files[0]);fileIn.value='';};
-let CUR=null;
+let CUR=null,CUR_BUF=null,CUR_NAME='',CUR_SHARE=null;
 const DEMO={name:'Demo',dims:'20×45×26',thumb:null};
 try{DEMO.thumb=localStorage.getItem('demoThumb')||null;}catch{}
 async function openSample(){const res=await fetch(import.meta.env.BASE_URL+'sample.litematic');if(!res.ok)throw new Error(res.status);return openBuffer(await res.arrayBuffer(),'upd_plushki',{demo:true});}
@@ -428,7 +430,93 @@ $('sample').onclick=()=>openSample().catch(()=>showErr('Не удалось за
 async function openFromHistory(id){
   const e=await hist.get(id).catch(()=>null);
   if(!e){showErr('Файл не найден в истории');return false;}
-  return openBuffer(e.data,e.name,{id});
+  return openBuffer(e.data,e.name,{id,shareId:e.shareId});
+}
+
+// ===== Share: upload to the server (MySQL), put ?s=<id> into the address bar =====
+const CONFIG={share:false,maxBytes:0};
+// the address bar always matches what's on screen: ?s=<id> for a shared model, nothing otherwise
+function setShareUrl(id){
+  const u=id?new URL('./?s='+id,document.baseURI):new URL(location.href);
+  if(!id)u.searchParams.delete('s');
+  if(u.href!==location.href)history.replaceState(null,'',u);
+}
+let toastT=0;
+function toast(t,err=false){const el=$('toast');el.textContent=t;el.classList.toggle('err',err);el.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>el.classList.remove('show'),3500);}
+// POST with upload progress (fetch can't report it)
+function uploadShare(buf,name,onProgress){
+  return new Promise((resolve,reject)=>{
+    const x=new XMLHttpRequest();
+    x.open('POST','api/shares?name='+encodeURIComponent(name));
+    x.setRequestHeader('Content-Type','application/octet-stream');
+    x.upload.onprogress=e=>{if(e.lengthComputable)onProgress(e.loaded/e.total);};
+    x.upload.onload=()=>onProgress(1);
+    x.onload=()=>{let j={};try{j=JSON.parse(x.responseText);}catch{}
+      if(x.status>=200&&x.status<300&&j.id)resolve(j);else reject(new Error(j.error||'Сервер не ответил ('+x.status+')'));};
+    x.onerror=()=>reject(new Error('Нет связи с сервером'));
+    x.send(buf);
+  });
+}
+const shareDlg=$('shareDlg');
+function shareStage(label,frac){ // frac null → indeterminate (waiting for the database)
+  $('shStage').textContent=label;$('shPct').textContent=frac==null?'':Math.round(frac*100)+'%';
+  $('shBar').classList.toggle('indet',frac==null);$('shBar').style.width=frac==null?'':(frac*100).toFixed(1)+'%';
+}
+function shareShowLink(url,note){
+  $('shareProg').hidden=true;$('shareDone').hidden=false;$('shareNote').textContent=note;$('shareUrl').value=url;
+  $('shareNative').hidden=!(navigator.share&&!finePointer.matches);
+  $('shareUrl').focus();$('shareUrl').select();
+}
+async function shareCurrent(){
+  if(!CUR_BUF)return;
+  $('shareTitle').textContent=CUR==='demo'?'Поделиться демо':`Поделиться «${CUR_NAME}»`;
+  $('shareErr').textContent='';$('shareProg').hidden=false;$('shareDone').hidden=true;$('shareCopy').textContent='Скопировать';
+  shareStage('Загружаю',0);shareDlg.showModal();
+  if(CUR==='demo'){shareShowLink(new URL('demo/',document.baseURI).href,'Демо уже лежит на сайте — вот ссылка.');return;}
+  if(CUR_BUF.byteLength>CONFIG.maxBytes){$('shareProg').hidden=true;$('shareErr').textContent=`Файл больше ${(CONFIG.maxBytes/1048576).toFixed(0)} МБ — такой не поделиться.`;return;}
+  try{
+    const j=await uploadShare(CUR_BUF,CUR_NAME,f=>f<1?shareStage('Загружаю',f*0.9):shareStage('Сохраняю в базу',null));
+    shareStage('Готово',1);
+    CUR_SHARE=j.id;await hist.save({id:CUR,shareId:j.id}).catch(()=>{});
+    setShareUrl(j.id);
+    shareShowLink(location.href,j.updated?'Ссылка та же, что и раньше — файл в ней обновлён.':'Ссылка готова. Кто её откроет, увидит эту модель.');
+  }catch(e){$('shareProg').hidden=true;$('shareErr').textContent=e.message||'Не удалось поделиться';}
+}
+$('shareBtn').onclick=shareCurrent;
+$('shareClose').onclick=()=>shareDlg.close();
+shareDlg.addEventListener('click',e=>{if(e.target===shareDlg)shareDlg.close();});
+$('shareCopy').onclick=async()=>{
+  const u=$('shareUrl').value;
+  try{await navigator.clipboard.writeText(u);}catch{$('shareUrl').select();document.execCommand?.('copy');}
+  $('shareCopy').textContent='Скопировано ✓';
+};
+$('shareNative').onclick=()=>navigator.share({title:CUR==='demo'?'Litematica Viewer':CUR_NAME,url:$('shareUrl').value}).catch(()=>{});
+
+// ===== Rename (pencil next to the project name; not for the demo) =====
+function startRename(){
+  if(CUR==='demo'||!CUR)return;
+  const inp=$('titleInput');inp.value=CUR_NAME;inp.hidden=false;$('title').hidden=true;panel.classList.add('renaming');
+  inp.focus();inp.select();
+}
+async function endRename(save){
+  const inp=$('titleInput');if(inp.hidden)return;
+  const name=inp.value.replace(/[\u0000-\u001f]/g,'').trim().slice(0,120);
+  inp.hidden=true;$('title').hidden=false;panel.classList.remove('renaming');
+  if(!save||!name||name===CUR_NAME)return;
+  CUR_NAME=name;$('title').textContent=name;$('crumb').textContent=name;
+  await hist.save({id:CUR,name}).catch(()=>{});
+  // keep the server copy in step, so re-sharing under this name overwrites the same link
+  if(CUR_SHARE&&CONFIG.share)fetch('api/shares/'+CUR_SHARE,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})})
+    .then(r=>{if(!r.ok)return r.json().then(j=>toast(j.error||'На сервере имя не обновилось',true));}).catch(()=>{});
+}
+$('renameBtn').onclick=e=>{e.stopPropagation();startRename();};
+$('titleInput').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();endRename(true);}else if(e.key==='Escape'){e.preventDefault();endRename(false);}};
+$('titleInput').onblur=()=>endRename(true);
+async function openShared(id){
+  const res=await fetch('api/shares/'+encodeURIComponent(id));
+  if(!res.ok)throw new Error(res.status===404?'Ссылка не найдена — возможно, её удалили':'Сервер не отдал файл');
+  const name=decodeURIComponent(res.headers.get('X-Name')||'')||'schematic';
+  return openBuffer(await res.arrayBuffer(),name,{shareId:id});
 }
 
 // ===== History menu (the model name in the header) =====
@@ -466,21 +554,29 @@ $('histClose').onclick=closeMenu;
 addEventListener('click',e=>{if(!menu.hidden&&!menu.contains(e.target))closeMenu();});
 addEventListener('keydown',e=>{if(e.key==='Escape')closeMenu();});
 
-// start with the last model this browser looked at; first visit (or nothing saved) → demo
+// start: a shared link (?s=<id>) wins; else the last model this browser looked at; first visit → demo
+fetch('api/config').then(r=>r.ok?r.json():null).then(c=>{if(c?.share){Object.assign(CONFIG,c);document.body.classList.add('can-share');}}).catch(()=>{});
 (async()=>{
+  const sid=new URLSearchParams(location.search).get('s');
+  if(sid){
+    try{if(await openShared(sid))return;}
+    catch(e){toast(e.message,true);}
+    setShareUrl(null);
+  }
   let last=null;try{last=localStorage.getItem('lastOpened');}catch{}
   if(last&&last!=='demo'&&await openFromHistory(last).catch(()=>false))return;
   clearErr();
   openSample().catch(e=>console.warn('sample not loaded',e));
 })();
 // collapsible settings panel
-const panel=$('panel');
 function setCollapsed(c){panel.classList.toggle('collapsed',c);$('pToggle').setAttribute('aria-expanded',String(!c));}
 // collapsing is a phone thing (CSS applies .collapsed only ≤560px): collapsed by default there, choice remembered
 const narrow=matchMedia('(max-width:560px)');
 setCollapsed(true);
 try{if(localStorage.getItem('panelCollapsed')==='0')setCollapsed(false);}catch{}
-$('pToggle').onclick=()=>{if(!narrow.matches)return;const c=!panel.classList.contains('collapsed');setCollapsed(c);try{localStorage.setItem('panelCollapsed',c?'1':'0');}catch{}resize();};
+function togglePanel(){if(!narrow.matches)return;const c=!panel.classList.contains('collapsed');setCollapsed(c);try{localStorage.setItem('panelCollapsed',c?'1':'0');}catch{}resize();}
+$('pToggle').onclick=togglePanel;
+$('ptitle').onclick=()=>{if($('titleInput').hidden)togglePanel();}; // phones: tap the name to fold/unfold
 let dragDepth=0;
 addEventListener('dragenter',e=>{e.preventDefault();dragDepth++;document.body.classList.add('dragging');});
 addEventListener('dragleave',e=>{if(--dragDepth<=0){dragDepth=0;document.body.classList.remove('dragging');}});

@@ -23,7 +23,9 @@ const demoPage = {
 export default defineConfig({
   base: './',
   plugins: [siteUrl, demoPage],
-  server: { port: 5173, host: true },
+  // dev: the share API runs separately (`npm run api`, port 5231)
+  // strictPort: if 5173 is taken, fail loudly instead of quietly sharing it with another server
+  server: { port: 5173, strictPort: true, host: true, proxy: { '/api': 'http://localhost:5231' } },
   preview: { port: 4173, host: true },
   build: { target: 'es2020', chunkSizeWarningLimit: 1200 },
 });

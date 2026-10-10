@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Litematica → иллюстрация</title>
-<meta name="description" content="Перетащи .litematic — получи рисованную 3D-модель постройки из Minecraft. Прямо в браузере, файл никуда не уходит.">
+<meta name="description" content="Перетащи .litematic — получи рисованную 3D-модель постройки из Minecraft. Прямо в браузере.">
 <meta name="theme-color" content="#f3ede0">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Litematica Viewer">
 <meta property="og:title" content="Litematica Viewer — постройки из Minecraft как иллюстрации">
-<meta property="og:description" content="Перетащи .litematic — получи рисованную 3D-модель. Прямо в браузере, файл никуда не уходит.">
+<meta property="og:description" content="Перетащи .litematic — получи рисованную 3D-модель. Прямо в браузере.">
 <meta property="og:url" content="__SITE_URL__/">
 <meta property="og:image" content="__SITE_URL__/og.png">
 <meta property="og:image:width" content="1200">
@@ -29,7 +29,7 @@
 <div class="drop">
   <div class="card">
     <h2>Покажи свою постройку</h2>
-    <p>Перетащи сюда файл <b>.litematic</b> — постройка превратится в рисованную 3D-модель. Всё считается в браузере, файл никуда не отправляется.</p>
+    <p>Перетащи сюда файл <b>.litematic</b> — постройка превратится в рисованную 3D-модель. Всё считается в браузере; на сервер файл попадает, только если нажать «Поделиться».</p>
     <div class="zone">Отпусти файл здесь</div>
     <div class="actions">
       <button class="btn primary" id="pick">Выбрать файл</button>
@@ -56,6 +56,20 @@
   <p class="hempty" id="histEmpty">Открытые файлы появятся здесь. Хранятся только в этом браузере.</p>
   <button class="btn hadd" id="histOpen">+ Открыть файл…</button>
 </div>
+<dialog class="card open-dlg share-dlg" id="shareDlg" aria-labelledby="shareTitle">
+  <button class="x" id="shareClose" aria-label="Закрыть">×</button>
+  <h2 id="shareTitle">Поделиться</h2>
+  <div class="share-prog" id="shareProg">
+    <div class="ptop"><span id="shStage">Загружаю</span><b id="shPct">0%</b></div>
+    <div class="track"><div class="bar" id="shBar"></div></div>
+  </div>
+  <div class="share-done" id="shareDone" hidden>
+    <p class="hint" id="shareNote"></p>
+    <div class="share-link"><input id="shareUrl" readonly aria-label="Ссылка"><button class="btn primary" id="shareCopy">Скопировать</button></div>
+    <button class="btn" id="shareNative" hidden>Отправить…</button>
+  </div>
+  <div class="msg err" id="shareErr" role="status"></div>
+</dialog>
 <dialog class="card open-dlg" id="openDlg" aria-labelledby="dlgTitle">
   <button class="x" id="dlgClose" aria-label="Закрыть">×</button>
   <h2 id="dlgTitle">Открыть схематику</h2>
@@ -64,9 +78,10 @@
     <b>Перетащи файл .litematic сюда</b>
     <span>или нажми, чтобы выбрать на компьютере</span>
   </label>
-  <p class="hint">Где взять файл: в игре Litematica → <b>M</b> → Area Editor → Save Schematic, файлы лежат в папке <code>.minecraft/schematics</code>. Файл никуда не отправляется — всё считается в браузере.</p>
+  <p class="hint">Где взять файл: в игре Litematica → <b>M</b> → Area Editor → Save Schematic, файлы лежат в папке <code>.minecraft/schematics</code>. Всё считается в браузере; на сервер файл попадает, только если нажать «Поделиться».</p>
   <div class="msg err" id="msg3" role="status"></div>
 </dialog>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 <div class="drag-hint">Отпусти, чтобы открыть</div>
 <div class="busy"><div class="card prog" id="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Обработка схематики">
   <div class="ptop"><span id="pStage">Начинаю</span><b id="pPct">0%</b></div>
@@ -75,10 +90,11 @@
 </div></div>
 <input type="file" id="file" accept=".litematic" hidden>
 <div class="panel card" id="panel">
-  <button class="phead" id="pToggle" aria-expanded="true" aria-controls="pBody">
-    <h1><span id="title"></span> <span class="tag">демо</span></h1>
-    <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-  </button>
+  <div class="phead">
+    <h1 id="ptitle"><span id="title"></span><input id="titleInput" class="title-input" maxlength="120" aria-label="Название проекта" hidden> <span class="tag">демо</span></h1>
+    <button class="icon-btn" id="renameBtn" title="Переименовать" aria-label="Переименовать"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4Zm9-13 4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <button class="icon-btn chev-btn" id="pToggle" aria-expanded="true" aria-controls="pBody" aria-label="Свернуть или развернуть панель"><svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+  </div>
   <div class="pbody" id="pBody">
   <div class="meta" id="meta"></div>
   <div class="seg" role="group" aria-label="Вид">
@@ -89,6 +105,7 @@
   <label class="check toon-only"><input type="checkbox" id="shadows" checked> Тени</label>
   <div class="stats" id="stats"></div>
   </div>
+  <button class="btn primary share-btn" id="shareBtn"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V4m0 0-4 4m4-4 4 4M6 11H5v9h14v-9h-1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Поделиться</button>
   <div class="msg err" id="msg2" role="status"></div>
 </div>
 <script type="module" src="/src/main.js"></script>

@@ -1,9 +1,12 @@
 # litematica-viewer
 
-Static web app: drop a `.litematic` file → toon-shaded, ink-outlined 3D illustration. 100% client-side, no backend.
+Web app: drop a `.litematic` file → toon-shaded, ink-outlined 3D illustration. Rendering is 100% client-side;
+a small Express server (`server/`) serves `dist/` and the share API backed by MySQL.
 
 ## Commands
-- `npm run dev` — dev server on :5173
+- `npm run dev` — dev server on :5173 (proxies `/api` to :5231)
+- `npm run api` — share server on :5231 (`server/index.js`; reads `.env`, see `.env.example`)
+- `npm start` — production: serves `dist/` + API on `$PORT`
 - `npm run build` — production build to `dist/` (relative paths, `base: './'`)
 - `npm run preview` — serve `dist/` on :4173
 - `python3 tools/build_colors.py <mc-version>` — regenerate `src/colors.json`
@@ -47,4 +50,17 @@ Static web app: drop a `.litematic` file → toon-shaded, ink-outlined 3D illust
   `renderer.outputColorSpace` / `THREE.ColorManagement` review or colours will shift.
 - Add support for a new block shape: add a kind in `classify()` and a `case` in `convert()`;
   use `box()` / `rbox()` (facing-relative) helpers for cuboids.
-- Keep everything client-side: files must never be uploaded anywhere.
+- Files leave the browser only through «Поделиться» (explicit click). Keep it that way.
+
+## Sharing (server/)
+- `POST /api/shares?name=` (raw .litematic) → `{id, updated}`; id is random (16 hex). Same uploader (sha256 of the
+  IP, never the raw IP) + same name + same size → that row is overwritten and keeps its id. `PATCH /api/shares/:id`
+  `{name}` renames (uploader only). `GET /api/shares/:id` → bytes (+ `X-Name`), `no-cache` + ETag. `GET /api/config` → `{share, maxBytes}`; the page shows the button only
+  when `share` is true. `GET /?s=:id` injects the model name into og/twitter titles.
+- DB env like our other Render apps: `DATABASE_URL` or `DB_HOST/DB_PORT/DB_USER/DB_PASSWORD/DB_NAME`, `DB_SSL`, `DB_POOL`.
+  No env or no connection → sharing off, server keeps running.
+- Tables are prefixed `litemat_app_` (shared database). Schema changes = new entry in `server/migrations.js`
+  (never edit an applied one); applied ids are stored in `litemat_app_migrations`.
+- Frontend: «Поделиться» sits at the bottom of the project panel and opens a dialog (XHR upload progress → «saving»
+  → link). The pencil next to the project name renames it locally and, if shared, on the server too. The address bar
+  mirrors the model on screen (`?s=<id>` or nothing, `setShareUrl`); shared ids live on the history entry (`shareId`).
