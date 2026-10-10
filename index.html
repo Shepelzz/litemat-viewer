@@ -12,7 +12,7 @@
 <div id="view"></div>
 <div class="drop">
   <div class="card">
-    <h2>Litematica → иллюстрация</h2>
+    <h2>Покажи свою постройку</h2>
     <p>Перетащи сюда файл <b>.litematic</b> — постройка превратится в рисованную 3D-модель. Всё считается в браузере, файл никуда не отправляется.</p>
     <div class="zone">Отпусти файл здесь</div>
     <div class="actions">
@@ -22,6 +22,27 @@
     <div class="msg" id="msg" role="status"></div>
   </div>
 </div>
+<header class="top card">
+  <a class="brand" href="./" aria-label="На главную">
+    <svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3 28 9.5v13L16 29 4 22.5v-13Z" fill="var(--accent)" stroke="var(--ink)" stroke-width="2" stroke-linejoin="round"/><path d="M4 9.5 16 16l12-6.5M16 16v13" fill="none" stroke="var(--ink)" stroke-width="2" stroke-linejoin="round"/><path d="M16 16 28 9.5v13L16 29Z" fill="var(--ink)" opacity=".25"/></svg>
+      </a>
+  <span class="crumb" id="crumb"></span>
+  <div class="tactions">
+    <button class="btn ghost" id="demoBtn">Пример</button>
+    <button class="btn primary" id="openBtn">Открыть<span class="lg"> файл</span></button>
+  </div>
+</header>
+<dialog class="card open-dlg" id="openDlg" aria-labelledby="dlgTitle">
+  <button class="x" id="dlgClose" aria-label="Закрыть">×</button>
+  <h2 id="dlgTitle">Открыть схематику</h2>
+  <label class="zone big" id="dlgZone" tabindex="0">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V4m0 0-4 4m4-4 4 4M5 15v4h14v-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <b>Перетащи файл .litematic сюда</b>
+    <span>или нажми, чтобы выбрать на компьютере</span>
+  </label>
+  <p class="hint">Где взять файл: в игре Litematica → <b>M</b> → Area Editor → Save Schematic, файлы лежат в папке <code>.minecraft/schematics</code>. Файл никуда не отправляется — всё считается в браузере.</p>
+  <div class="msg err" id="msg3" role="status"></div>
+</dialog>
 <div class="drag-hint">Отпусти, чтобы открыть</div>
 <div class="busy"><div class="card prog" id="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Обработка схематики">
   <div class="ptop"><span id="pStage">Начинаю</span><b id="pPct">0%</b></div>
@@ -30,17 +51,20 @@
 </div></div>
 <input type="file" id="file" accept=".litematic" hidden>
 <div class="panel card" id="panel">
-  <h1 id="title"></h1>
+  <button class="phead" id="pToggle" aria-expanded="true" aria-controls="pBody">
+    <h1><span id="title"></span> <span class="tag">демо</span></h1>
+    <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+  <div class="pbody" id="pBody">
   <div class="meta" id="meta"></div>
   <div class="seg" role="group" aria-label="Вид">
     <button id="mCube" aria-pressed="false">Как в игре</button>
     <button id="mToon" aria-pressed="true">Стилизовано</button>
   </div>
-  <div class="row"><label for="cut">Срез снизу <output id="oCut"></output></label><input id="cut" type="range" min="0" step="1" value="0"></div>
   <label class="check toon-only"><input type="checkbox" id="lines" checked> Контуры</label>
   <label class="check toon-only"><input type="checkbox" id="shadows" checked> Тени</label>
   <div class="stats" id="stats"></div>
-  <button class="btn" id="pick2">Открыть другой файл</button>
+  </div>
   <div class="msg err" id="msg2" role="status"></div>
 </div>
 <script type="module" src="/src/main.js"></script>

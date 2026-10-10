@@ -13,7 +13,7 @@ Static web app: drop a `.litematic` file → toon-shaded, ink-outlined 3D illust
    values span across longs). Merges multiple regions (handles negative `Size`), crops empty space.
 2. `convert.js` — shared model state `M`, block classification (`classify()` → kind), per-kind geometry rules
    (stairs → sloped wedges incl. inner/outer corners, slabs, panes, fences, walls, trapdoors, doors, leaves → blobs, …),
-   colour lookup (`colors.json` + name fallbacks), automatic ground cut (`computeCut`).
+   colour lookup (`colors.json` + name fallbacks), automatic ground cut (`computeCut`; computed but not applied — the UI always shows the full schematic, `M.CUT=0`).
 3. `greedy.js` — greedy meshing of full cubes (merges coplanar same-colour faces).
 4. `main.js` — three.js scene: MeshToonMaterial (3-step gradient), shadows, ortho camera, OrbitControls,
    post-process outline pass (depth + normal edges, line weight scales with on-screen block size), UI + progress.

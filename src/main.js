@@ -38,7 +38,7 @@ function frameModel(){
   Object.assign(sun.shadow.camera,{left:-S-6,right:S+6,top:S+6,bottom:-S-6,near:1,far:S*8+50});sun.shadow.camera.updateProjectionMatrix();
   sun.position.set(-0.45*S*3,0.8*S*3,0.55*S*3); sun.target.position.set(0,H/3,0);
   controls.target.set(0,H*0.42,0);
-  VIEW.fh=Math.max(H*1.25,R*1.9);
+  VIEW.ext=viewExtents(H,R,H*0.42);
   camera.zoom=1;post.uniforms.depthScale.value=S*12+99;camera.position.set(VIEW.dir[0]*S*5,VIEW.dir[1]*S*5+H*0.42,VIEW.dir[2]*S*5);camera.far=S*12+100;
   resize();
 }
@@ -120,20 +120,39 @@ function sync(){
 }
 $('mCube').onclick=async()=>{st.mode='cube';if(rawDirty){startProgress('');try{await buildRaw();}finally{stopProgress();}}sync();};$('mToon').onclick=()=>{st.mode='toon';sync();};
 $('lines').addEventListener('input',sync);
-let rb=0;$('cut').addEventListener('input',()=>{M.CUT=+$('cut').value;$('oCut').textContent=M.CUT;cancelAnimationFrame(rb);rb=requestAnimationFrame(async()=>{if(await rebuild()!==false)frameModel();});});$('shadows').addEventListener('input',sync);
+$('shadows').addEventListener('input',sync);
 const VIEW={dir:[-0.55,0.62,0.56],fh:40};
 camera.position.set(VIEW.dir[0]*200,VIEW.dir[1]*200,VIEW.dir[2]*200);
+// model + plinth extents in screen-plane units (u right, v up), relative to the orbit target
+function viewExtents(H,R,ty){
+  const d=new THREE.Vector3(...VIEW.dir).normalize(),f=d.clone().negate();
+  const r=new THREE.Vector3().crossVectors(f,new THREE.Vector3(0,1,0)).normalize(),up=new THREE.Vector3().crossVectors(r,f);
+  const e={u0:1e9,u1:-1e9,v0:1e9,v1:-1e9},p=new THREE.Vector3();
+  const add=(x,y,z)=>{p.set(x,y-ty,z);const u=p.dot(r),v=p.dot(up);e.u0=Math.min(e.u0,u);e.u1=Math.max(e.u1,u);e.v0=Math.min(e.v0,v);e.v1=Math.max(e.v1,v);};
+  for(const x of[-M.NX/2,M.NX/2])for(const y of[0,H])for(const z of[-M.NZ/2,M.NZ/2])add(x,y,z);
+  for(let i=0;i<32;i++){const a=i/32*Math.PI*2;add(Math.cos(a)*R,0,Math.sin(a)*R);}
+  return e;
+}
+// fit the model into the screen area not covered by the header (top) and the settings panel (left / bottom)
 function resize(){
-  const w=view.clientWidth,h=view.clientHeight,a=w/h,fh=VIEW.fh*(w<600?1.25:1);
-  const off=(w>860&&loaded)?150/h*fh:0; camera.left=-fh*a/2-off;camera.right=fh*a/2-off;camera.top=fh/2;camera.bottom=-fh/2;camera.updateProjectionMatrix();
+  const w=view.clientWidth,h=view.clientHeight,e=VIEW.ext;
+  if(e){
+    const hdr=document.querySelector('.top')?.getBoundingClientRect().bottom||0;
+    const open=!$('panel').classList.contains('collapsed');
+    const T=hdr+12,B=open&&w>860?24:72,L=open&&w>860?322:16,Rm=16;
+    const aw=Math.max(50,w-L-Rm),ah=Math.max(50,h-T-B);
+    const k=Math.max((e.u1-e.u0)/aw,(e.v1-e.v0)/ah)*1.04;
+    const uL=(e.u0+e.u1)/2-(L+aw/2)*k,vT=(e.v0+e.v1)/2+(T+ah/2)*k;
+    camera.left=uL;camera.right=uL+w*k;camera.top=vT;camera.bottom=vT-h*k;
+  }else{const a=w/h,fh=VIEW.fh;camera.left=-fh*a/2;camera.right=fh*a/2;camera.top=fh/2;camera.bottom=-fh/2;}
+  camera.updateProjectionMatrix();
   renderer.setSize(w,h,false);
   const dw=Math.floor(w*renderer.getPixelRatio()),dh=Math.floor(h*renderer.getPixelRatio());
   rtColor.setSize(dw,dh);rtNormal.setSize(dw,dh);post.uniforms.res.value.set(dw,dh);post.uniforms.px.value=renderer.getPixelRatio();
 }
 addEventListener('resize',resize);resize();
 async function loadModel(m,label){
-  setModel(m); M.CUT=M.AUTO_CUT; loaded=true;
-  $('cut').max=Math.max(1,M.NY-4);$('cut').value=M.CUT;$('oCut').textContent=M.CUT;
+  setModel(m); M.CUT=0; loaded=true; // always show the full schematic, ground included
   $('title').textContent=m.name||label||'Схематика';
   $('meta').textContent=[m.author&&('автор: '+m.author),`${M.NX}×${M.NY}×${M.NZ}`].filter(Boolean).join(', ');
   await rebuild(0.42,0.97); frameModel();
@@ -174,28 +193,42 @@ function startProgress(label){
   PROG.on(0,'Начинаю');
 }
 function stopProgress(){PROG.on=null;document.body.classList.remove('loading');for(const b of document.querySelectorAll('button,input'))b.disabled=false;}
-// cut slider rebuilds: show a slim bar without blocking
 // ===== File loading UI =====
-const fileIn=$('file');
-function showErr(t){const el=document.body.classList.contains('has-model')?$('msg2'):$('msg');el.className='msg err';el.textContent=t;}
-function clearErr(){$('msg').textContent='';$('msg2').textContent='';}
-async function openBuffer(buf,label){
+const fileIn=$('file'), dlg=$('openDlg');
+const finePointer=matchMedia('(pointer:fine)');
+function showErr(t){const el=dlg.open?$('msg3'):document.body.classList.contains('has-model')?$('msg2'):$('msg');el.className='msg err';el.textContent=t;}
+function clearErr(){$('msg').textContent='';$('msg2').textContent='';$('msg3').textContent='';}
+async function openBuffer(buf,label,demo=false){
   clearErr();startProgress(label);
-  try{const m=await readLitematic(buf);await loadModel(m,label);}
+  try{const m=await readLitematic(buf);await loadModel(m,label);document.body.classList.toggle('is-demo',demo);$('crumb').textContent=demo?'Demo':label;}
   catch(e){console.error(e);showErr(e.message||'Не удалось прочитать файл');}
   finally{stopProgress();}
 }
 async function openFile(f){
   if(!f)return;
   if(!/\.litematic$/i.test(f.name)){showErr(`«${f.name}» — не .litematic. Сохрани постройку в Litematica: M → Area Editor → Save Schematic.`);return;}
+  if(dlg.open)dlg.close();
   openBuffer(await f.arrayBuffer(),f.name.replace(/\.litematic$/i,''));
 }
-$('pick').onclick=$('pick2').onclick=()=>fileIn.click();
+// desktop: a dialog you can drop onto; touch devices go straight to the system picker
+function askFile(){if(!finePointer.matches)return fileIn.click();clearErr();dlg.showModal();}
+$('pick').onclick=()=>fileIn.click();
+$('openBtn').onclick=askFile;
+$('dlgClose').onclick=()=>dlg.close();
+dlg.addEventListener('click',e=>{if(e.target===dlg)dlg.close();});
+$('dlgZone').onclick=()=>fileIn.click();
+$('dlgZone').onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();fileIn.click();}};
 fileIn.onchange=()=>{openFile(fileIn.files[0]);fileIn.value='';};
-async function openSample(){const res=await fetch(import.meta.env.BASE_URL+'sample.litematic');if(!res.ok)throw new Error(res.status);return openBuffer(await res.arrayBuffer(),'upd_plushki');}
-$('sample').onclick=openSample;
+async function openSample(){const res=await fetch(import.meta.env.BASE_URL+'sample.litematic');if(!res.ok)throw new Error(res.status);return openBuffer(await res.arrayBuffer(),'upd_plushki',true);}
+$('sample').onclick=$('demoBtn').onclick=()=>openSample().catch(e=>showErr('Не удалось загрузить пример'));
 // demo on first visit; if it can't be fetched, the start screen stays as is
 openSample().catch(e=>console.warn('sample not loaded',e));
+// collapsible settings panel
+const panel=$('panel');
+function setCollapsed(c){panel.classList.toggle('collapsed',c);$('pToggle').setAttribute('aria-expanded',String(!c));}
+setCollapsed(true); // collapsed by default; an explicit choice is remembered
+try{if(localStorage.getItem('panelCollapsed')==='0')setCollapsed(false);}catch{}
+$('pToggle').onclick=()=>{const c=!panel.classList.contains('collapsed');setCollapsed(c);try{localStorage.setItem('panelCollapsed',c?'1':'0');}catch{}resize();};
 let dragDepth=0;
 addEventListener('dragenter',e=>{e.preventDefault();dragDepth++;document.body.classList.add('dragging');});
 addEventListener('dragleave',e=>{if(--dragDepth<=0){dragDepth=0;document.body.classList.remove('dragging');}});
