@@ -42,6 +42,12 @@ Static web app: drop a `.litematic` file → toon-shaded, ink-outlined 3D illust
 - OG/Twitter tags in `index.html` use `__SITE_URL__`, replaced at build by the `site-url` plugin in `vite.config.js`
   from `SITE_URL` or Render's `RENDER_EXTERNAL_URL`.
 
+## Showcases
+- `src/showcases.js` lists fixed showcase pages: `/<key>/` opens `public/<file>` (e.g. `/beehive/` → `beehive.litematic`).
+  `vite.config.js` emits `<key>/index.html` (with `<base href="../">` and its own og:title/url) for each entry plus
+  `/demo/`. Showcases look like the demo, appear under Demo in the recent list, aren't saved to history and don't
+  change `lastOpened`. Add one = drop the file into `public/` + one line in `showcases.js`.
+
 ## Conventions
 - three.js is pinned to 0.147.0 (legacy colour management; colours are authored as displayed). Upgrading needs
   `renderer.outputColorSpace` / `THREE.ColorManagement` review or colours will shift.

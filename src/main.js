@@ -6,6 +6,7 @@ import {readLitematic} from './litematic.js';
 import {M,setModel,convert,at,hash} from './convert.js';
 import {greedyMesh} from './greedy.js';
 import * as hist from './history.js';
+import {SHOWCASES} from './showcases.js';
 
 // ===== Rendering: toon shading + ink outlines =====
 const view=document.getElementById('view');
@@ -385,16 +386,23 @@ const fileIn=$('file'), dlg=$('openDlg');
 const finePointer=matchMedia('(pointer:fine)');
 function showErr(t){const el=dlg.open?$('msg3'):document.body.classList.contains('has-model')?$('msg2'):$('msg');el.className='msg err';el.textContent=t;}
 function clearErr(){$('msg').textContent='';$('msg2').textContent='';$('msg3').textContent='';}
-// src: {demo:true} | {id} (from history) | {} (a new file → saved to history)
+// src: {demo:true} | {showcase:'<key>'} | {id} (from history) | {} (a new file → saved to history)
 async function openBuffer(buf,label,src={}){
   clearErr();startProgress(label);
   let m;
   try{m=await readLitematic(buf);await loadModel(m,label);}
   catch(e){console.error(e);showErr(e.message||'Не удалось прочитать файл');return false;}
   finally{stopProgress();}
-  document.body.classList.toggle('is-demo',!!src.demo);
-  $('crumb').textContent=src.demo?'Demo':label;
+  const sc=src.showcase&&SHOWCASES[src.showcase];
+  document.body.classList.toggle('is-demo',!!(src.demo||sc));
+  $('crumb').textContent=src.demo?'Demo':sc?sc.title:label;
+  if(sc)$('title').textContent=sc.title;
   const thumb=thumbnail();
+  if(sc){CUR='showcase:'+src.showcase;try{localStorage.setItem('thumb:'+src.showcase,thumb||'');}catch{}
+    return true;} // a showcase isn't a recent file and isn't reopened on the main page
+  // anything else opened on a showcase page: the address goes back to the main page, so a reload shows this, not the showcase
+  if(SHOWCASE){const root=import.meta.env.DEV?new URL('/',location.href):new URL('./',document.baseURI); // dev pages have no <base>
+    if(location.pathname!==root.pathname)history.replaceState(null,'',root);}
   if(src.demo){CUR='demo';DEMO.thumb=thumb||DEMO.thumb;try{localStorage.setItem('demoThumb',DEMO.thumb||'');}catch{}}
   else{
     CUR=src.id||await hist.fileId(buf);
@@ -424,6 +432,11 @@ let CUR=null;
 const DEMO={name:'Demo',dims:'20×45×26',thumb:null};
 try{DEMO.thumb=localStorage.getItem('demoThumb')||null;}catch{}
 async function openSample(){const res=await fetch(import.meta.env.BASE_URL+'sample.litematic');if(!res.ok)throw new Error(res.status);return openBuffer(await res.arrayBuffer(),'upd_plushki',{demo:true});}
+// showcase page (/<key>/): its build is fetched from the site root (dev has no <base>, hence the absolute path)
+const SHOWCASE=Object.keys(SHOWCASES).find(k=>new RegExp(`/${k}/?$`).test(location.pathname));
+async function openShowcase(key){const s=SHOWCASES[key];
+  const res=await fetch((import.meta.env.DEV?'/':import.meta.env.BASE_URL)+s.file);if(!res.ok)throw new Error(res.status);
+  return openBuffer(await res.arrayBuffer(),s.title,{showcase:key});}
 $('sample').onclick=()=>openSample().catch(()=>showErr('Не удалось загрузить пример'));
 async function openFromHistory(id){
   const e=await hist.get(id).catch(()=>null);
@@ -435,14 +448,16 @@ async function openFromHistory(id){
 const menu=$('histMenu'),sw=$('switcher');
 const ago=t=>{const d=(Date.now()-t)/864e5;if(d<1&&new Date(t).getDate()===new Date().getDate())return 'сегодня';if(d<2)return 'вчера';return new Date(t).toLocaleDateString('ru',{day:'numeric',month:'short'});};
 function row(e,isDemo){
-  const li=document.createElement('li');li.className='hitem'+(CUR===(isDemo?'demo':e.id)?' cur':'');
+  const li=document.createElement('li');li.className='hitem'+(CUR===(e.key?'showcase:'+e.key:isDemo?'demo':e.id)?' cur':'');
   const b=document.createElement('button');b.className='hopen';
   const img=document.createElement(e.thumb?'img':'span');img.className='hthumb';if(e.thumb){img.src=e.thumb;img.alt='';}
   const t=document.createElement('span');t.className='htext';
   const n=document.createElement('b');n.textContent=e.name;
   const meta=document.createElement('small');meta.textContent=isDemo?`пример · ${e.dims}`:`${e.dims} · ${ago(e.viewed)}`;
   t.append(n,meta);b.append(img,t);
-  b.onclick=async()=>{closeMenu();if(isDemo)openSample().catch(()=>showErr('Не удалось загрузить пример'));else openFromHistory(e.id);};
+  b.onclick=async()=>{closeMenu();
+    if(e.key)location.href=import.meta.env.DEV?`/${e.key}/`:new URL(e.key+'/',document.baseURI).href; // showcase: its own page
+    else if(isDemo)openSample().catch(()=>showErr('Не удалось загрузить пример'));else openFromHistory(e.id);};
   li.append(b);
   if(!isDemo){
     const x=document.createElement('button');x.className='hdel';x.setAttribute('aria-label',`Удалить «${e.name}» из истории`);x.textContent='×';
@@ -454,6 +469,8 @@ function row(e,isDemo){
 async function renderMenu(){
   const items=await hist.list().catch(()=>[]);
   const ul=$('histList');ul.replaceChildren(row(DEMO,true));
+  for(const [key,s] of Object.entries(SHOWCASES)){let thumb=null;try{thumb=localStorage.getItem('thumb:'+key)||null;}catch{}
+    ul.append(row({key,name:s.title,dims:s.dims,thumb},true));}
   if(items.length){const h=document.createElement('li');h.className='hsep';h.textContent='Мои файлы';ul.append(h);}
   for(const e of items)ul.append(row(e,false));
   $('histEmpty').hidden=items.length>0;
@@ -468,6 +485,7 @@ addEventListener('keydown',e=>{if(e.key==='Escape')closeMenu();});
 
 // start with the last model this browser looked at; first visit (or nothing saved) → demo
 (async()=>{
+  if(SHOWCASE&&await openShowcase(SHOWCASE).catch(e=>{console.warn('showcase not loaded',e);return false;}))return;
   let last=null;try{last=localStorage.getItem('lastOpened');}catch{}
   if(last&&last!=='demo'&&await openFromHistory(last).catch(()=>false))return;
   clearErr();
