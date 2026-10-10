@@ -137,7 +137,7 @@ function splitGeometry(g){
 function addChunked(group,g,mat){for(const cg of splitGeometry(g)){const m=new THREE.Mesh(cg,mat);m.castShadow=m.receiveShadow=true;freeAfterUpload(m);group.add(m);}}
 // instanced items → one InstancedMesh per chunk with a bounding sphere around its instances.
 // items: {n, g: Float32 per-item data (stride), c: Uint8 rgb}; centre = g[i*stride..+2]; setMatrix(i, mat4 array, offset)
-function addInstChunked(group,geo,mat,items,stride,idxs,setMatrix){
+function addInstChunked(group,geo,mat,items,stride,idxs,setMatrix,foliage=false){
   const G=items.g.a,buckets=new Map();
   for(const i of idxs){const o=i*stride,k=chunkKey(G[o],G[o+2]);let b=buckets.get(k);if(!b)buckets.set(k,b=[]);b.push(i);}
   const box=new THREE.Box3(),v=new THREE.Vector3(),C=items.c.a;
@@ -148,7 +148,7 @@ function addInstChunked(group,geo,mat,items,stride,idxs,setMatrix){
     im.instanceColor=new THREE.InstancedBufferAttribute(col,3,true);
     cg.boundingSphere=box.getBoundingSphere(new THREE.Sphere());cg.boundingSphere.radius+=2;
     im.frustumCulled=true; // three r147 turns culling off for InstancedMesh; our sphere covers the chunk
-    im.castShadow=im.receiveShadow=true;freeAfterUpload(im);group.add(im);
+    im.castShadow=im.receiveShadow=true;if(foliage)im.layers.enable(1);freeAfterUpload(im);group.add(im);
   }
   geo.dispose();
 }
@@ -202,7 +202,7 @@ async function rebuild(p0=0,p1=1){
   {const P=blob.attributes.position,N=blob.attributes.normal,v=new THREE.Vector3();for(let i=0;i<P.count;i++){v.fromBufferAttribute(P,i).normalize();N.setXYZ(i,v.x,v.y,v.z);}N.needsUpdate=true;}
   const blobTris=blob.attributes.position.count/3;
   if(keep.length)addInstChunked(styled,blob,toon({color:0xffffff}),L,4,keep,(i,m,o)=>{const k=i*4,r=LG[k+3]*grow;
-    m.fill(0,o,o+16);m[o]=r;m[o+5]=r*.9;m[o+10]=r;m[o+12]=LG[k];m[o+13]=LG[k+1];m[o+14]=LG[k+2];m[o+15]=1;});
+    m.fill(0,o,o+16);m[o]=r;m[o+5]=r*.9;m[o+10]=r;m[o+12]=LG[k];m[o+13]=LG[k+1];m[o+14]=LG[k+2];m[o+15]=1;},true);
   triCount=triVerts/3+ggTris+boxN*12+keep.length*blobTris;
   rawDirty=true; if(st.mode==='cube') await buildRaw();
   sync();
@@ -214,12 +214,16 @@ const rtColor=new THREE.WebGLRenderTarget(1,1,{samples:4});
 rtColor.depthTexture=new THREE.DepthTexture(1,1);
 const rtNormal=new THREE.WebGLRenderTarget(1,1); rtNormal.depthTexture=new THREE.DepthTexture(1,1);
 const normalMat=new THREE.MeshNormalMaterial();
+// alpha 0 = foliage marker. three forces alpha=1 for opaque materials (#define OPAQUE), hence transparent — with
+// blending off, so the 0 is written as is
+const foliageNormalMat=new THREE.MeshNormalMaterial({opacity:0,transparent:true,blending:THREE.NoBlending});
 const post=new THREE.ShaderMaterial({
   uniforms:{tColor:{value:rtColor.texture},tNormal:{value:rtNormal.texture},tDepth:{value:rtNormal.depthTexture},
-    res:{value:new THREE.Vector2(1,1)},px:{value:1},cn:{value:1},cf:{value:1000},ink:{value:new THREE.Color('#4a3a30')},lines:{value:1},dThr:{value:.55},lw:{value:1},ia:{value:1}},
+    res:{value:new THREE.Vector2(1,1)},px:{value:1},cn:{value:1},cf:{value:1000},ink:{value:new THREE.Color('#4a3a30')},lines:{value:1},lw:{value:1},
+    ppbT:{value:14},zt:{value:100},bg:{value:BG},fogStart:{value:100},fogRange:{value:100},fogMax:{value:.5}},
   vertexShader:`varying vec2 vUv;void main(){vUv=uv;gl_Position=vec4(position.xy,0.,1.);}`,
   fragmentShader:`
-    uniform sampler2D tColor,tNormal,tDepth;uniform vec2 res;uniform float px,cn,cf,lines,dThr,lw,ia;uniform vec3 ink;varying vec2 vUv;
+    uniform sampler2D tColor,tNormal,tDepth;uniform vec2 res;uniform float px,cn,cf,lines,lw,ppbT,zt,fogStart,fogRange,fogMax;uniform vec3 ink,bg;varying vec2 vUv;
     // inverse view depth: linear across the screen on any plane in a perspective view
     float W(vec2 uv){float z=texture2D(tDepth,uv).x*2.-1.;return (cf+cn-z*(cf-cn))/(2.*cn*cf);}
     vec3 N(vec2 uv){return texture2D(tNormal,uv).xyz*2.-1.;}
@@ -230,13 +234,28 @@ const post=new THREE.ShaderMaterial({
       // depth/normal targets are sampled nearest: snap to a texel centre and step a whole number of texels each way,
       // so the samples are symmetric. With a fractional offset they snap unevenly and, on a surface seen almost
       // edge-on, the depth slope itself reads as an edge (inked stripes across the plinth at low camera angles)
-      vec2 uv=(floor((vUv+wob)*res)+.5)/res, o=max(1.,floor(lw+.5))/res;
-      // second difference of 1/z: 0 on any flat surface however steeply it's viewed; ×z² turns it back into depth units
+      vec2 uv=(floor((vUv+wob)*res)+.5)/res;
       float w0=W(uv),z0=1./w0;
-      float d=(abs(W(uv+vec2(o.x,0))+W(uv-vec2(o.x,0))-2.*w0)+abs(W(uv+vec2(0,o.y))+W(uv-vec2(0,o.y))-2.*w0))*z0*z0;
+      // line weight per pixel from its own depth (blocks far away are smaller on screen than at the orbit target)
+      float lwP=px*clamp(pow(ppbT*zt/z0/14.,.85),.4,1.6);
+      vec2 o=max(1.,floor(lwP+.5))/res;
+      float wx1=W(uv+vec2(o.x,0)),wx2=W(uv-vec2(o.x,0)),wy1=W(uv+vec2(0,o.y)),wy2=W(uv-vec2(0,o.y));
+      // second difference of 1/z: 0 on any flat surface however steeply it's viewed; ×z² turns it back into depth units
+      float d=(abs(wx1+wx2-2.*w0)+abs(wy1+wy2-2.*w0))*z0*z0;
       float n=length(N(uv+vec2(o.x,0))-N(uv-vec2(o.x,0)))+length(N(uv+vec2(0,o.y))-N(uv-vec2(0,o.y)));
+      // size of a block here, judged by the nearest sample — so a silhouette against the sky keeps its weight
+      float ppb=ppbT*zt*max(max(w0,max(wx1,wx2)),max(wy1,wy2));
+      float ia=clamp((ppb-2.)/8.,0.,1.);            // tiny far blocks: lines fade out instead of turning into a mesh
+      float dThr=max(.55,5./ppb*lwP/px);
+      // foliage (alpha 0 in the normal pass): inside a crown — this pixel and all four samples are leaves — no lines,
+      // except where another crown is far behind; the crown's edge against anything else is drawn as usual
+      float fol=step(texture2D(tNormal,uv).a,.5)*step(texture2D(tNormal,uv+vec2(o.x,0)).a,.5)*step(texture2D(tNormal,uv-vec2(o.x,0)).a,.5)
+               *step(texture2D(tNormal,uv+vec2(0,o.y)).a,.5)*step(texture2D(tNormal,uv-vec2(0,o.y)).a,.5);
+      if(fol>.5){n=0.;dThr=max(dThr*3.,6.);}
       float e=max(smoothstep(dThr,dThr*1.6,d),smoothstep(0.5,0.9,n))*lines;
       c=mix(c,ink,clamp(e,0.,1.)*0.92*ia);
+      // aerial perspective: what lies beyond the orbit target fades a little towards the background
+      if(texture2D(tDepth,uv).x<1.)c=mix(c,bg,clamp((z0-fogStart)/fogRange,0.,1.)*fogMax);
       c*=0.99+0.01*h(floor(p/1.5));
       gl_FragColor=vec4(c,1.);
     }`});
@@ -370,16 +389,20 @@ function draw(){
     camera.near=Math.max(0.5,dc-R);camera.far=dc+R;camera.updateProjectionMatrix();
     post.uniforms.cn.value=camera.near;post.uniforms.cf.value=camera.far;
   }
-  { // line weight follows on-screen block size: thin & faint when blocks are tiny, a bit bolder up close
-    const pr=renderer.getPixelRatio(), hpx=view.clientHeight||1;
-    const ppb=hpx/(2*TAN*camera.position.distanceTo(controls.target));   // CSS pixels per block at the target
-    post.uniforms.lw.value=pr*THREE.MathUtils.clamp(Math.pow(ppb/14,0.85),0.4,1.6);
-    post.uniforms.ia.value=THREE.MathUtils.clamp((ppb-2.5)/8,0.12,1);
-    post.uniforms.dThr.value=Math.max(0.55,5/ppb*post.uniforms.lw.value/pr); }
+  { // line weight follows on-screen block size (the shader rescales it per pixel by depth); fog starts at the target
+    const pr=renderer.getPixelRatio(), hpx=view.clientHeight||1, zt=camera.position.distanceTo(controls.target);
+    const ppb=hpx/(2*TAN*zt);   // CSS pixels per block at the target
+    const U=post.uniforms;
+    U.lw.value=pr*THREE.MathUtils.clamp(Math.pow(ppb/14,0.85),0.4,1.6);U.ppbT.value=ppb;U.zt.value=zt;
+    U.fogStart.value=zt;U.fogRange.value=zt*1.5;U.fogMax.value=.45; } // fog: none up to the target, ~30% at 2× its distance
   if(st.mode==='cube'){renderer.setRenderTarget(null);renderer.render(scene,camera);return;}
   renderer.setRenderTarget(rtColor);renderer.render(scene,camera);
   scene.overrideMaterial=normalMat;const bg=scene.background;scene.background=new THREE.Color(.5,.5,1);
   renderer.setRenderTarget(rtNormal);renderer.render(scene,camera);
+  // foliage again (layer 1) on top at the same depth, with alpha 0 — the outline pass reads that as "leaves"
+  scene.overrideMaterial=foliageNormalMat;scene.background=null;camera.layers.set(1);renderer.autoClear=false;
+  renderer.render(scene,camera);
+  renderer.autoClear=true;camera.layers.set(0);
   scene.overrideMaterial=null;scene.background=bg;
   renderer.setRenderTarget(null);renderer.render(postScene,postCam);
 }
@@ -396,7 +419,7 @@ function thumbnail(){
 }
 
 // dev-only debug handle: window.viewer.{controls,camera,M,surfaceAtCenter,invalidate}
-if(import.meta.env.DEV)window.viewer={controls,camera,M,surfaceAtCenter,invalidate,THREE,renderer,sun,scene,styled,draw};
+if(import.meta.env.DEV)window.viewer={controls,camera,M,surfaceAtCenter,invalidate,THREE,renderer,sun,scene,styled,draw,rtNormal};
 
 // ===== Progress overlay =====
 function fmtSec(s){return s<1?'меньше секунды':s<60?`≈ ${Math.ceil(s)} с`:`≈ ${Math.floor(s/60)} мин ${Math.ceil(s%60)} с`;}

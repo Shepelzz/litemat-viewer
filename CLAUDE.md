@@ -35,7 +35,12 @@ Static web app: drop a `.litematic` file → toon-shaded, ink-outlined 3D illust
   camera axis: nearest point to the model centre while the whole model is in view, else `surfaceAtCenter()`.
 - Outline pass: near/far hug the model every frame; edges use the second difference of 1/z (zero on any plane),
   sampled at texel centres with whole-texel offsets. `rtColor` has a depth texture only to get a 24-bit depth buffer.
-- Dev only: `window.viewer` = {controls, camera, M, renderer, sun, scene, styled, invalidate, surfaceAtCenter, draw}.
+  Line weight/fade/threshold are per pixel from its depth (`ppbT`·`zt`/z, nearest sample wins), so far parts get
+  thin faint lines. Aerial perspective: beyond the orbit target colours fade towards `BG` (`fogStart/Range/Max`).
+- Foliage blobs are also on layer 1; the normal pass draws them again with `foliageNormalMat` (alpha 0 — needs
+  `transparent:true`, three forces alpha 1 on opaque materials). Where a pixel and its 4 samples are all foliage the
+  outline pass skips normal edges and needs a big depth jump → crowns get one silhouette, not a line per blob.
+- Dev only: `window.viewer` = {controls, camera, M, renderer, sun, scene, styled, invalidate, surfaceAtCenter, draw, rtNormal}.
 
 ## Social preview
 - `public/og.png` (1200×630) is a render of the demo + title, composed in the browser via `window.viewer.draw()`.
