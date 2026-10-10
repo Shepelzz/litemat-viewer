@@ -435,7 +435,21 @@ async function openSample(){const res=await fetch(import.meta.env.BASE_URL+'samp
 // showcase page (/<key>/): its build is fetched from the site root (dev has no <base>, hence the absolute path)
 const SHOWCASE=Object.keys(SHOWCASES).find(k=>new RegExp(`/${k}/?$`).test(location.pathname));
 const asset=f=>(import.meta.env.DEV?'/':import.meta.env.BASE_URL)+f; // site-root file, also from a showcase page
+// phones and tablets (iPadOS reports itself as a Mac, so also check for touch points)
+const isMobileDevice=()=>matchMedia('(pointer:coarse)').matches||navigator.maxTouchPoints>1;
+// heavy showcase on a phone/tablet: ask first; resolves true to go ahead, false to open the demo instead
+function confirmHeavy(s){
+  const d=$('heavyDlg');
+  $('heavyText').textContent=`«${s.title}» — огромная карта (${s.dims} блоков). На телефонах и планшетах ей может не хватить памяти: страница перезагрузится, не дойдя до конца. Лучше открыть на компьютере.`;
+  return new Promise(res=>{
+    const done=v=>{d.close();res(v);};
+    $('heavyGo').onclick=()=>done(true);$('heavyDemo').onclick=()=>done(false);
+    d.oncancel=e=>{e.preventDefault();done(false);}; // Esc = the safe choice
+    d.showModal();
+  });
+}
 async function openShowcase(key){const s=SHOWCASES[key];
+  if(s.heavy&&isMobileDevice()&&!await confirmHeavy(s))return 'declined';
   const res=await fetch(asset(s.file));if(!res.ok)throw new Error(res.status);
   return openBuffer(await res.arrayBuffer(),s.title,{showcase:key});}
 $('sample').onclick=()=>openSample().catch(()=>showErr('Не удалось загрузить пример'));
@@ -487,7 +501,11 @@ addEventListener('keydown',e=>{if(e.key==='Escape')closeMenu();});
 
 // start with the last model this browser looked at; first visit (or nothing saved) → demo
 (async()=>{
-  if(SHOWCASE&&await openShowcase(SHOWCASE).catch(e=>{console.warn('showcase not loaded',e);return false;}))return;
+  if(SHOWCASE){
+    const r=await openShowcase(SHOWCASE).catch(e=>{console.warn('showcase not loaded',e);return false;});
+    if(r==='declined'){await openSample().catch(()=>{});return;} // «Открыть Demo»
+    if(r)return;
+  }
   let last=null;try{last=localStorage.getItem('lastOpened');}catch{}
   if(last&&last!=='demo'&&await openFromHistory(last).catch(()=>false))return;
   clearErr();
