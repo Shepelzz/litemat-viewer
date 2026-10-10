@@ -92,8 +92,8 @@ body.dragging .open-dlg .zone{border-color:var(--accent);background:color-mix(in
 .hint{margin:0;color:var(--muted);font-size:13px;line-height:1.5}
 .hint code{font-size:12px}
 /* collapsible panel */
-.phead{all:unset;display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;cursor:pointer}
-.phead .chev{display:block;width:22px;height:22px;flex:none;transition:transform .2s;transform:rotate(180deg)}
+.phead{all:unset;display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;cursor:default}
+.phead .chev{display:none;width:22px;height:22px;flex:none;transition:transform .2s;transform:rotate(180deg)}
 .msg{min-height:1.4em;margin-top:14px;font-size:14px}
 .msg.err{color:var(--err)}
 .msg:empty{min-height:0;margin:0}
@@ -111,6 +111,11 @@ body.loading .busy{display:grid}
  .top{left:8px;right:8px;top:calc(8px + env(safe-area-inset-top,0px));padding:6px 6px 6px 10px}
  .lg{display:none}
  .tactions .btn{padding:7px 12px}
+ .phead{cursor:pointer}
+ .phead .chev{display:block}
+ .panel.collapsed .chev{transform:none}
+ .panel.collapsed .pbody{display:none}
+ .panel.collapsed{padding:10px 14px}
  .hist{left:8px;right:8px;top:calc(70px + env(safe-area-inset-top,0px));width:auto;max-height:calc(100dvh - 86px - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px))}
  body.menu-open .top{z-index:5}
  body.menu-open::after{content:"";position:fixed;inset:0;z-index:3;background:color-mix(in srgb,var(--ink) 35%,transparent)}
@@ -118,6 +123,3 @@ body.loading .busy{display:grid}
 }
 @media (prefers-reduced-motion:reduce){.btn:hover{transform:none}}
 
-.panel.collapsed .chev{transform:none}
-.panel.collapsed .pbody{display:none}
-.panel.collapsed{padding:10px 14px}

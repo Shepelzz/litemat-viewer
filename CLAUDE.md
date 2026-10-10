@@ -21,6 +21,18 @@ Static web app: drop a `.litematic` file → toon-shaded, ink-outlined 3D illust
    header model name is the switcher. `localStorage.lastOpened` picks the model shown on start (else the demo).
 6. `progress.js` — `step(frac,label)` yields to the browser every ~45 ms so the progress bar repaints.
 
+## Rendering performance (main.js)
+- Geometry is split into 32×32 column chunks (`addChunked` / `addInstChunked`) so the colour, normal and shadow
+  passes cull off-screen parts. three r147 sets `frustumCulled=false` on every `InstancedMesh` — chunks set it back
+  to true with their own bounding sphere; keep that if you add instanced geometry.
+- Render on demand: `invalidate()` (controls change, resize, `sync()`); an idle view draws nothing.
+- Shadow map: `renderer.shadowMap.autoUpdate=false`; `fitShadow()` fits the shadow frustum to what's on screen and
+  sets `needsUpdate` only when that frustum changes.
+- Render size capped at ~5 MP (`resize()`), since every frame is 3 full-screen passes.
+- Controls: left drag / one finger = pan, right drag / two fingers = rotate; orbit pivot snaps to the block surface on
+  the camera axis at the start of each gesture (`surfaceAtCenter`).
+- Dev only: `window.viewer` = {controls, camera, M, renderer, sun, scene, styled, invalidate, surfaceAtCenter}.
+
 ## Conventions
 - three.js is pinned to 0.147.0 (legacy colour management; colours are authored as displayed). Upgrading needs
   `renderer.outputColorSpace` / `THREE.ColorManagement` review or colours will shift.
