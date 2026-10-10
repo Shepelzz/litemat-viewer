@@ -4,7 +4,7 @@ import './style.css';
 import {PROG,step} from './progress.js';
 import {readLitematic} from './litematic.js';
 import {M,setModel,convert,at,hash,glassColor} from './convert.js';
-import {greedyMesh} from './greedy.js';
+import {greedyMesh,greedyMeshLayers} from './greedy.js';
 import * as hist from './history.js';
 import {SHOWCASES} from './showcases.js';
 
@@ -190,21 +190,18 @@ async function rebuild(p0=0,p1=1){
     s.tri=null; // let the working buffers go before the next big allocations
     g.computeVertexNormals();packNormals(g);
     addChunked(styled,g,toonMat);}
-  const solidT=new Uint8Array(M.PAL.length),occT=new Uint8Array(M.PAL.length);
-  for(let i=0;i<M.PAL.length;i++){solidT[i]=occT[i]=M.KIND[i]==='cube'?1:0;}
-  const gg=await greedyMesh(solidT,occT,M.COLT,M.COLS,p0+(p1-p0)*0.82,p0+(p1-p0)*0.95,'Склеиваю грани');
+  // one greedy pass for cubes and glass: cube faces hide only behind cubes; glass faces behind cubes or glass
+  // (so glass becomes flat panels, not a grid of see-through boxes)
+  const n=M.PAL.length,solidT=new Uint8Array(n),solidG=new Uint8Array(n),occG=new Uint8Array(n);
+  for(let i=0;i<n;i++){solidT[i]=M.KIND[i]==='cube'?1:0;solidG[i]=M.KIND[i]==='glass'?1:0;occG[i]=solidT[i]|solidG[i];}
+  const colG=M.COLS.map(glassColor);
+  const [gg,gl]=await greedyMeshLayers([{solid:solidT,occ:solidT,colTop:M.COLT,colSide:M.COLS},{solid:solidG,occ:occG,colTop:colG,colSide:colG}],
+    p0+(p1-p0)*0.82,p0+(p1-p0)*0.95,'Склеиваю грани');
   if(my!==buildId)return false;
-  const ggTris=gg.attributes.position.count/3;
+  const ggTris=gg.attributes.position.count/3,glassTris=gl.attributes.position.count/3;
   addChunked(styled,gg,toonMat);
-  // glass blocks → merged panels (faces only where glass meets air or a non-cube block), like the cube mesher
-  const solidG=new Uint8Array(M.PAL.length),occG=new Uint8Array(M.PAL.length);
-  for(let i=0;i<M.PAL.length;i++){solidG[i]=M.KIND[i]==='glass'?1:0;occG[i]=(M.KIND[i]==='glass'||M.KIND[i]==='cube')?1:0;}
-  let glassTris=0;
-  if(solidG.some(Boolean)){const colG=M.COLS.map(glassColor);
-    const gl=await greedyMesh(solidG,occG,colG,colG,p0+(p1-p0)*0.95,p0+(p1-p0)*0.96,'Склеиваю стекло');
-    if(my!==buildId)return false;
-    glassTris=gl.attributes.position.count/3;
-    for(const m of addChunked(styled,gl,glassMats.panel[0])){m.userData.glass='panel';GLASS.push(m);}}
+  if(glassTris)for(const m of addChunked(styled,gl,glassMats.panel[0])){m.userData.glass='panel';GLASS.push(m);}
+  else gl.dispose();
   await step(p0+(p1-p0)*0.96,'Собираю сцену',true);
   // boxes: centre + size (stride 6) → scale/translate matrix
   const B=s.boxes,BG=B.g.a,boxN=B.n;
@@ -470,6 +467,9 @@ function showErr(t){const el=dlg.open?$('msg3'):document.body.classList.contains
 function clearErr(){$('msg').textContent='';$('msg2').textContent='';$('msg3').textContent='';}
 // src: {demo:true} | {showcase:'<key>'} | {id} (from history) | {} (a new file → saved to history)
 async function openBuffer(buf,label,src={}){
+  // one load at a time: buttons are disabled while loading, but a drop or a history click could start a second one,
+  // and two builds sharing the model state break each other
+  if(document.body.classList.contains('loading'))return false;
   clearErr();startProgress(label);
   let m;
   try{m=await readLitematic(buf);CUR_BUF=buf;await loadModel(m,label);}

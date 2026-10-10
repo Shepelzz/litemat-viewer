@@ -65,7 +65,7 @@ export function setModel(m){
   M.KIND=M.PAL.map(classify);
   M.COLT=M.PAL.map(e=>styl(e.t));M.COLS=M.PAL.map(e=>styl(e.s));
   for(let i=0;i<M.PAL.length;i++)if(M.KIND[i]==='liquid'){M.COLT[i]=styl(M.PAL[i].n==='lava'?'#d96a1c':'#6f9fd8');M.COLS[i]=M.COLT[i];}
-  M.AUTO_CUT=computeCut();
+  // M.AUTO_CUT=computeCut(); — the ground cut isn't used (the full schematic is always shown) and costs two full passes over the grid
 }
 const idx=(x,y,z)=>x+M.NX*(y+M.NY*z);
 const at=(x,y,z)=>(x<0||y<M.CUT||z<0||x>=M.NX||y>=M.NY||z>=M.NZ)?-1:M.GRID[idx(x,y,z)];

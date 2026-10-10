@@ -13,7 +13,7 @@ Static web app: drop a `.litematic` file → toon-shaded, ink-outlined 3D illust
    values span across longs). Merges multiple regions (handles negative `Size`), crops empty space.
 2. `convert.js` — shared model state `M`, block classification (`classify()` → kind), per-kind geometry rules
    (stairs → sloped wedges incl. inner/outer corners, slabs, panes, fences, walls, trapdoors, doors, leaves → blobs, …),
-   colour lookup (`colors.json` + name fallbacks), automatic ground cut (`computeCut`; computed but not applied — the UI always shows the full schematic, `M.CUT=0`).
+   colour lookup (`colors.json` + name fallbacks), automatic ground cut (`computeCut`; no longer called — the UI always shows the full schematic, `M.CUT=0`).
 3. `greedy.js` — greedy meshing of full cubes (merges coplanar same-colour faces).
 4. `main.js` — three.js scene: MeshToonMaterial (3-step gradient), shadows, narrow 18° perspective camera
    (lens-shifted via `setViewOffset` to centre the model in the area free of header/panel), OrbitControls,
@@ -40,7 +40,8 @@ Static web app: drop a `.litematic` file → toon-shaded, ink-outlined 3D illust
 - Foliage blobs are also on layer 1; the normal pass draws them again with `foliageNormalMat` (alpha 0 — needs
   `transparent:true`, three forces alpha 1 on opaque materials). Where a pixel and its 4 samples are all foliage the
   outline pass skips normal edges and needs a big depth jump → crowns get one silhouette, not a line per blob.
-- Glass: full glass blocks are merged into panels by a second `greedyMesh` pass (faces only against air / non-cube
+- Glass: full glass blocks are merged into panels in the same `greedyMeshLayers` pass as cubes (one grid sweep, two
+  output geometries) (faces only against air / non-cube
   blocks); glass panes go to `glassBoxes`. Both live in `GLASS` with two materials each (`glassMats`); the
   «Прозрачное стекло» toggle (on by default) swaps them (opacity .6, no depth write), turns off their shadows and hides them in the
   normal pass so what's behind the glass gets outlined. Choice kept in `localStorage.clearGlass`.
@@ -59,7 +60,10 @@ Static web app: drop a `.litematic` file → toon-shaded, ink-outlined 3D illust
 
 ## Memory (big maps)
 - Loader: palette first → `Uint8Array` grid when ≤256 block states, else `Uint16Array`; packed BlockStates are read
-  in place from the decompressed buffer (NBT long arrays aren't copied); no crop copy when there's nothing to crop.
+  in place from the decompressed buffer (NBT long arrays aren't copied). Selections whose box would take >400 MB get
+  a first pass that finds where the blocks actually are, and the grid is allocated for just that (sky / empty margins
+  never hit memory); smaller ones are filled whole and cropped. Size limit is in bytes: ~1.6 GB desktop, 500 MB on
+  phones/tablets. Only one load at a time (`openBuffer` ignores calls while `body.loading`).
 - Geometry is built into typed buffers (`src/buf.js`): greedy faces = Int16 positions, Int8 normals, Uint8 colours;
   converter triangles = Float32 positions + Uint8 colours; boxes/blobs = flat Float32 data, not per-item objects.
 - `freeAfterUpload()`: CPU copies of vertex/instance data are dropped once on the GPU (never read back; rebuilds

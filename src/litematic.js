@@ -46,13 +46,6 @@ export async function readLitematic(buf){
     regs.push({name,min,sx,sy,sz,pal:r.BlockStatePalette||[],bits:r.BlockStates});
   }
   if(!regs.length)throw new Error('В схематике нет ни одного региона');
-  const lo={x:Infinity,y:Infinity,z:Infinity},hi={x:-Infinity,y:-Infinity,z:-Infinity};
-  for(const r of regs){lo.x=Math.min(lo.x,r.min.x);lo.y=Math.min(lo.y,r.min.y);lo.z=Math.min(lo.z,r.min.z);
-    hi.x=Math.max(hi.x,r.min.x+r.sx);hi.y=Math.max(hi.y,r.min.y+r.sy);hi.z=Math.max(hi.z,r.min.z+r.sz);}
-  let nx=hi.x-lo.x,ny=hi.y-lo.y,nz=hi.z-lo.z;
-  if(nx*ny*nz>200e6)throw new Error(`Схематика ${nx}×${ny}×${nz} не поместится в память браузера (нужно больше ~400 МБ только под сетку блоков).`);
-  // palette first, so the grid can be 1 byte per block when there are ≤256 distinct states (the grid is the
-  // biggest single allocation: one cell per block, air included)
   const palette=[{n:'air',p:{}}], key=new Map([['minecraft:air',0]]);
   for(const r of regs)r.map=r.pal.map(e=>{
     if(/^(minecraft:)?(air|cave_air|void_air)$/.test(e.Name))return 0;
@@ -60,37 +53,68 @@ export async function readLitematic(buf){
     if(!key.has(k)){key.set(k,palette.length);palette.push({n:e.Name.replace(/^minecraft:/,''),p:props});}
     return key.get(k);
   });
-  const Grid=palette.length<=256?Uint8Array:Uint16Array;
-  const grid=new Grid(nx*ny*nz);
-  let doneVol=0; const totVol=regs.reduce((a,r)=>a+r.sx*r.sy*r.sz,0)||1;
+  // packed BlockStates decoder per region: cell i → palette index (32-bit words read in place, low word first)
   for(const r of regs){
-    const map=r.map;
-    if(!r.bits||!r.bits.longs)continue;
-    // 32-bit word w of the packed long array, low word first (big-endian longs, read in place)
-    const L=r.bits.longs, words=L.n*2, wordAt=w=>w<words?L.dv.getUint32(L.off+((w>>>1)<<3)+(w&1?0:4)):0;
-    const bits=Math.max(2,Math.ceil(Math.log2(Math.max(2,r.pal.length)))), mask=bits>=32?0xffffffff:(1<<bits)-1;
+    const L=r.bits?.longs;
+    if(!L){r.cell=null;continue;}
+    const words=L.n*2, wordAt=w=>w<words?L.dv.getUint32(L.off+((w>>>1)<<3)+(w&1?0:4)):0;
+    const bits=Math.max(2,Math.ceil(Math.log2(Math.max(2,r.pal.length)))), mask=bits>=32?0xffffffff:(1<<bits)-1, map=r.map;
+    r.cell=i=>{const b=i*bits,w=b>>>5,s=b&31;let v=wordAt(w)>>>s;if(s+bits>32)v|=wordAt(w+1)<<(32-s);return map[(v&mask)>>>0];};
+  }
+  const totVol=regs.reduce((a,r)=>a+r.sx*r.sy*r.sz,0)||1;
+  const Grid=palette.length<=256?Uint8Array:Uint16Array; // 1 byte per block when there are ≤256 distinct states, else 2
+  // whole selection box
+  const lo={x:Infinity,y:Infinity,z:Infinity},hi={x:-Infinity,y:-Infinity,z:-Infinity};
+  for(const r of regs){lo.x=Math.min(lo.x,r.min.x);lo.y=Math.min(lo.y,r.min.y);lo.z=Math.min(lo.z,r.min.z);
+    hi.x=Math.max(hi.x,r.min.x+r.sx-1);hi.y=Math.max(hi.y,r.min.y+r.sy-1);hi.z=Math.max(hi.z,r.min.z+r.sz-1);}
+  const boxBytes=(hi.x-lo.x+1)*(hi.y-lo.y+1)*(hi.z-lo.z+1)*Grid.BYTES_PER_ELEMENT;
+  // pass 1, only for big selections: where are the actual blocks? The grid is then allocated for just that box —
+  // a selection is often mostly air (sky above the terrain, empty margins). Small ones skip it and get cropped after.
+  const scan=boxBytes>400e6;
+  let done=0;
+  if(scan){lo.x=lo.y=lo.z=Infinity;hi.x=hi.y=hi.z=-Infinity;}
+  if(scan)for(const r of regs){
+    if(!r.cell){done+=r.sx*r.sy*r.sz;continue;}
+    let i=0;
+    for(let y=0;y<r.sy;y++){
+      await step(0.15+0.12*(done+y*r.sx*r.sz)/totVol,'Ищу постройку');
+      let any=false;
+      for(let z=0;z<r.sz;z++)for(let x=0;x<r.sx;x++,i++)if(r.cell(i)){any=true;
+        const X=r.min.x+x,Z=r.min.z+z;if(X<lo.x)lo.x=X;if(X>hi.x)hi.x=X;if(Z<lo.z)lo.z=Z;if(Z>hi.z)hi.z=Z;}
+      if(any){const Y=r.min.y+y;if(Y<lo.y)lo.y=Y;if(Y>hi.y)hi.y=Y;}
+    }
+    done+=r.sx*r.sy*r.sz;
+  }
+  if(hi.x<lo.x)throw new Error('Схематика пустая — в ней только воздух');
+  const nx=hi.x-lo.x+1,ny=hi.y-lo.y+1,nz=hi.z-lo.z+1, bytes=nx*ny*nz*Grid.BYTES_PER_ELEMENT;
+  const mobile=typeof matchMedia==='function'&&(matchMedia('(pointer:coarse)').matches||navigator.maxTouchPoints>1);
+  const limit=mobile?500e6:1.6e9;
+  if(bytes>limit)throw new Error(`Постройка ${nx}×${ny}×${nz} (без пустоты вокруг) — под сетку блоков нужно ~${Math.round(bytes/1048576)} МБ, `
+    +`а браузер${mobile?' на телефоне':''} столько не выделит. Выдели в Litematica участок поменьше.`);
+  let grid=new Grid(nx*ny*nz);
+  // pass 2: fill
+  done=0;
+  for(const r of regs){
+    if(!r.cell){done+=r.sx*r.sy*r.sz;continue;}
     const ox=r.min.x-lo.x,oy=r.min.y-lo.y,oz=r.min.z-lo.z;
     let i=0;
     for(let y=0;y<r.sy;y++){
-    await step(0.15+0.25*(doneVol+y*r.sx*r.sz)/totVol,'Распаковываю блоки');
-    for(let z=0;z<r.sz;z++)for(let x=0;x<r.sx;x++,i++){
-      const b=i*bits, w=b>>>5, s=b&31;
-      let v=wordAt(w)>>>s; if(s+bits>32)v|=wordAt(w+1)<<(32-s); v=(v&mask)>>>0;
-      const g=map[v]; if(g)grid[(x+ox)+nx*((y+oy)+ny*(z+oz))]=g;
-    }}
-    doneVol+=r.sx*r.sy*r.sz;
+      await step((scan?0.27:0.15)+(scan?0.14:0.26)*(done+y*r.sx*r.sz)/totVol,'Распаковываю блоки');
+      for(let z=0;z<r.sz;z++)for(let x=0;x<r.sx;x++,i++){const g=r.cell(i);if(g)grid[(x+ox)+nx*((y+oy)+ny*(z+oz))]=g;}
+    }
+    done+=r.sx*r.sy*r.sz;
   }
-  await step(0.41,'Обрезаю пустоту',true);
-  // crop empty space
-  let x0=nx,y0=ny,z0=nz,x1=-1,y1=-1,z1=-1;
-  for(let z=0;z<nz;z++)for(let y=0;y<ny;y++)for(let x=0;x<nx;x++)if(grid[x+nx*(y+ny*z)]&&palette[grid[x+nx*(y+ny*z)]].n!=='air'){
-    if(x<x0)x0=x;if(y<y0)y0=y;if(z<z0)z0=z;if(x>x1)x1=x;if(y>y1)y1=y;if(z>z1)z1=z;}
-  if(x1<0)throw new Error('Схематика пустая — в ней только воздух');
-  const cx=x1-x0+1,cy=y1-y0+1,cz=z1-z0+1;
-  // nothing to crop → keep the grid as is (a copy would briefly double the biggest allocation)
-  let g2=grid;
-  if(cx!==nx||cy!==ny||cz!==nz){g2=new Grid(cx*cy*cz);
-    for(let z=0;z<cz;z++)for(let y=0;y<cy;y++)for(let x=0;x<cx;x++)g2[x+cx*(y+cy*z)]=grid[(x+x0)+nx*((y+y0)+ny*(z+z0))];}
+  let cx=nx,cy=ny,cz=nz;
+  if(!scan){ // crop empty space (copy only when there is something to crop)
+    await step(0.41,'Обрезаю пустоту',true);
+    let x0=nx,y0=ny,z0=nz,x1=-1,y1=-1,z1=-1;
+    for(let z=0;z<nz;z++)for(let y=0;y<ny;y++)for(let x=0,i=nx*(y+ny*z);x<nx;x++,i++)if(grid[i]){
+      if(x<x0)x0=x;if(y<y0)y0=y;if(z<z0)z0=z;if(x>x1)x1=x;if(y>y1)y1=y;if(z>z1)z1=z;}
+    if(x1<0)throw new Error('Схематика пустая — в ней только воздух');
+    cx=x1-x0+1;cy=y1-y0+1;cz=z1-z0+1;
+    if(cx!==nx||cy!==ny||cz!==nz){const g2=new Grid(cx*cy*cz);
+      for(let z=0;z<cz;z++)for(let y=0;y<cy;y++)for(let x=0;x<cx;x++)g2[x+cx*(y+cy*z)]=grid[(x+x0)+nx*((y+y0)+ny*(z+z0))];grid=g2;}
+  }
   const md=root.Metadata||{};
-  return {nx:cx,ny:cy,nz:cz,palette,grid:g2,name:md.Name||'',author:md.Author||'',regions:regs.length};
+  return {nx:cx,ny:cy,nz:cz,palette,grid,name:md.Name||'',author:md.Author||'',regions:regs.length};
 }
