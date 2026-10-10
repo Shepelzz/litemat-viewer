@@ -5,6 +5,7 @@ import {PROG,step} from './progress.js';
 import {readLitematic} from './litematic.js';
 import {M,setModel,convert,at,hash} from './convert.js';
 import {greedyMesh} from './greedy.js';
+import * as hist from './history.js';
 
 // ===== Rendering: toon shading + ink outlines =====
 const view=document.getElementById('view');
@@ -142,6 +143,7 @@ function resize(){
     const T=hdr+12,B=open&&w>860?24:72,L=open&&w>860?322:16,Rm=16;
     const aw=Math.max(50,w-L-Rm),ah=Math.max(50,h-T-B);
     const k=Math.max((e.u1-e.u0)/aw,(e.v1-e.v0)/ah)*1.04;
+    VIEW.area={x:L,y:T,w:aw,h:ah};
     const uL=(e.u0+e.u1)/2-(L+aw/2)*k,vT=(e.v0+e.v1)/2+(T+ah/2)*k;
     camera.left=uL;camera.right=uL+w*k;camera.top=vT;camera.bottom=vT-h*k;
   }else{const a=w/h,fh=VIEW.fh;camera.left=-fh*a/2;camera.right=fh*a/2;camera.top=fh/2;camera.bottom=-fh/2;}
@@ -162,6 +164,9 @@ async function loadModel(m,label){
 (function loop(){
   requestAnimationFrame(loop);controls.update();
   if(document.body.classList.contains('loading'))return; // don't spend the frame budget on rendering while we build
+  draw();
+})();
+function draw(){
   { // line weight follows on-screen block size: thin & faint when blocks are tiny, a bit bolder up close
     const pr=renderer.getPixelRatio(), hpx=view.clientHeight||1;
     const ppb=hpx*camera.zoom/(camera.top-camera.bottom);   // CSS pixels per block
@@ -174,7 +179,18 @@ async function loadModel(m,label){
   renderer.setRenderTarget(rtNormal);renderer.render(scene,camera);
   scene.overrideMaterial=null;scene.background=bg;
   renderer.setRenderTarget(null);renderer.render(postScene,postCam);
-})();
+}
+// small JPEG of the area the model is framed in; drawn and read in one go (no preserveDrawingBuffer needed)
+function thumbnail(){
+  const a=VIEW.area;if(!a)return null;
+  draw();
+  const pr=renderer.getPixelRatio(),c=document.createElement('canvas');c.width=240;c.height=180;
+  const g=c.getContext('2d'),sw=a.w*pr,sh=a.h*pr,k=Math.max(c.width/sw,c.height/sh);
+  const cw=c.width/k,ch=c.height/k; // crop (cover) from the centre of the framed area
+  g.fillStyle='#f3ede0';g.fillRect(0,0,c.width,c.height);
+  g.drawImage(renderer.domElement,a.x*pr+(sw-cw)/2,a.y*pr+(sh-ch)/2,cw,ch,0,0,c.width,c.height);
+  try{return c.toDataURL('image/jpeg',0.75);}catch{return null;}
+}
 
 // ===== Progress overlay =====
 function fmtSec(s){return s<1?'меньше секунды':s<60?`≈ ${Math.ceil(s)} с`:`≈ ${Math.floor(s/60)} мин ${Math.ceil(s%60)} с`;}
@@ -198,20 +214,34 @@ const fileIn=$('file'), dlg=$('openDlg');
 const finePointer=matchMedia('(pointer:fine)');
 function showErr(t){const el=dlg.open?$('msg3'):document.body.classList.contains('has-model')?$('msg2'):$('msg');el.className='msg err';el.textContent=t;}
 function clearErr(){$('msg').textContent='';$('msg2').textContent='';$('msg3').textContent='';}
-async function openBuffer(buf,label,demo=false){
+// src: {demo:true} | {id} (from history) | {} (a new file → saved to history)
+async function openBuffer(buf,label,src={}){
   clearErr();startProgress(label);
-  try{const m=await readLitematic(buf);await loadModel(m,label);document.body.classList.toggle('is-demo',demo);$('crumb').textContent=demo?'Demo':label;}
-  catch(e){console.error(e);showErr(e.message||'Не удалось прочитать файл');}
+  let m;
+  try{m=await readLitematic(buf);await loadModel(m,label);}
+  catch(e){console.error(e);showErr(e.message||'Не удалось прочитать файл');return false;}
   finally{stopProgress();}
+  document.body.classList.toggle('is-demo',!!src.demo);
+  $('crumb').textContent=src.demo?'Demo':label;
+  const thumb=thumbnail();
+  if(src.demo){CUR='demo';DEMO.thumb=thumb||DEMO.thumb;try{localStorage.setItem('demoThumb',DEMO.thumb||'');}catch{}}
+  else{
+    CUR=src.id||await hist.fileId(buf);
+    try{await hist.save({id:CUR,name:label,dims:`${M.NX}×${M.NY}×${M.NZ}`,author:m.author||'',thumb,data:buf});}
+    catch(e){console.warn('history not saved',e);}
+  }
+  try{localStorage.setItem('lastOpened',CUR);}catch{}
+  return true;
 }
 async function openFile(f){
   if(!f)return;
   if(!/\.litematic$/i.test(f.name)){showErr(`«${f.name}» — не .litematic. Сохрани постройку в Litematica: M → Area Editor → Save Schematic.`);return;}
   if(dlg.open)dlg.close();
+  closeMenu();
   openBuffer(await f.arrayBuffer(),f.name.replace(/\.litematic$/i,''));
 }
 // desktop: a dialog you can drop onto; touch devices go straight to the system picker
-function askFile(){if(!finePointer.matches)return fileIn.click();clearErr();dlg.showModal();}
+function askFile(){closeMenu();if(!finePointer.matches)return fileIn.click();clearErr();dlg.showModal();}
 $('pick').onclick=()=>fileIn.click();
 $('openBtn').onclick=askFile;
 $('dlgClose').onclick=()=>dlg.close();
@@ -219,10 +249,59 @@ dlg.addEventListener('click',e=>{if(e.target===dlg)dlg.close();});
 $('dlgZone').onclick=()=>fileIn.click();
 $('dlgZone').onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();fileIn.click();}};
 fileIn.onchange=()=>{openFile(fileIn.files[0]);fileIn.value='';};
-async function openSample(){const res=await fetch(import.meta.env.BASE_URL+'sample.litematic');if(!res.ok)throw new Error(res.status);return openBuffer(await res.arrayBuffer(),'upd_plushki',true);}
-$('sample').onclick=$('demoBtn').onclick=()=>openSample().catch(e=>showErr('Не удалось загрузить пример'));
-// demo on first visit; if it can't be fetched, the start screen stays as is
-openSample().catch(e=>console.warn('sample not loaded',e));
+let CUR=null;
+const DEMO={name:'Demo',dims:'20×45×26',thumb:null};
+try{DEMO.thumb=localStorage.getItem('demoThumb')||null;}catch{}
+async function openSample(){const res=await fetch(import.meta.env.BASE_URL+'sample.litematic');if(!res.ok)throw new Error(res.status);return openBuffer(await res.arrayBuffer(),'upd_plushki',{demo:true});}
+$('sample').onclick=()=>openSample().catch(()=>showErr('Не удалось загрузить пример'));
+async function openFromHistory(id){
+  const e=await hist.get(id).catch(()=>null);
+  if(!e){showErr('Файл не найден в истории');return false;}
+  return openBuffer(e.data,e.name,{id});
+}
+
+// ===== History menu (the model name in the header) =====
+const menu=$('histMenu'),sw=$('switcher');
+const ago=t=>{const d=(Date.now()-t)/864e5;if(d<1&&new Date(t).getDate()===new Date().getDate())return 'сегодня';if(d<2)return 'вчера';return new Date(t).toLocaleDateString('ru',{day:'numeric',month:'short'});};
+function row(e,isDemo){
+  const li=document.createElement('li');li.className='hitem'+(CUR===(isDemo?'demo':e.id)?' cur':'');
+  const b=document.createElement('button');b.className='hopen';
+  const img=document.createElement(e.thumb?'img':'span');img.className='hthumb';if(e.thumb){img.src=e.thumb;img.alt='';}
+  const t=document.createElement('span');t.className='htext';
+  const n=document.createElement('b');n.textContent=e.name;
+  const meta=document.createElement('small');meta.textContent=isDemo?`пример · ${e.dims}`:`${e.dims} · ${ago(e.viewed)}`;
+  t.append(n,meta);b.append(img,t);
+  b.onclick=async()=>{closeMenu();if(isDemo)openSample().catch(()=>showErr('Не удалось загрузить пример'));else openFromHistory(e.id);};
+  li.append(b);
+  if(!isDemo){
+    const x=document.createElement('button');x.className='hdel';x.setAttribute('aria-label',`Удалить «${e.name}» из истории`);x.textContent='×';
+    x.onclick=async ev=>{ev.stopPropagation();await hist.remove(e.id).catch(()=>{});renderMenu();};
+    li.append(x);
+  }
+  return li;
+}
+async function renderMenu(){
+  const items=await hist.list().catch(()=>[]);
+  const ul=$('histList');ul.replaceChildren(row(DEMO,true));
+  if(items.length){const h=document.createElement('li');h.className='hsep';h.textContent='Мои файлы';ul.append(h);}
+  for(const e of items)ul.append(row(e,false));
+  $('histEmpty').hidden=items.length>0;
+}
+function openMenu(){renderMenu();menu.hidden=false;sw.setAttribute('aria-expanded','true');document.body.classList.add('menu-open');}
+function closeMenu(){if(menu.hidden)return;menu.hidden=true;sw.setAttribute('aria-expanded','false');document.body.classList.remove('menu-open');}
+sw.onclick=e=>{e.stopPropagation();menu.hidden?openMenu():closeMenu();};
+$('histOpen').onclick=askFile;
+$('histClose').onclick=closeMenu;
+addEventListener('click',e=>{if(!menu.hidden&&!menu.contains(e.target))closeMenu();});
+addEventListener('keydown',e=>{if(e.key==='Escape')closeMenu();});
+
+// start with the last model this browser looked at; first visit (or nothing saved) → demo
+(async()=>{
+  let last=null;try{last=localStorage.getItem('lastOpened');}catch{}
+  if(last&&last!=='demo'&&await openFromHistory(last).catch(()=>false))return;
+  clearErr();
+  openSample().catch(e=>console.warn('sample not loaded',e));
+})();
 // collapsible settings panel
 const panel=$('panel');
 function setCollapsed(c){panel.classList.toggle('collapsed',c);$('pToggle').setAttribute('aria-expanded',String(!c));}

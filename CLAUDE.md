@@ -17,7 +17,9 @@ Static web app: drop a `.litematic` file → toon-shaded, ink-outlined 3D illust
 3. `greedy.js` — greedy meshing of full cubes (merges coplanar same-colour faces).
 4. `main.js` — three.js scene: MeshToonMaterial (3-step gradient), shadows, ortho camera, OrbitControls,
    post-process outline pass (depth + normal edges, line weight scales with on-screen block size), UI + progress.
-5. `progress.js` — `step(frac,label)` yields to the browser every ~45 ms so the progress bar repaints.
+5. `history.js` — recently opened files in IndexedDB (file bytes + JPEG thumbnail, last 20, id = SHA-256 prefix);
+   header model name is the switcher. `localStorage.lastOpened` picks the model shown on start (else the demo).
+6. `progress.js` — `step(frac,label)` yields to the browser every ~45 ms so the progress bar repaints.
 
 ## Conventions
 - three.js is pinned to 0.147.0 (legacy colour management; colours are authored as displayed). Upgrading needs

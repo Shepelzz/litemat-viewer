@@ -26,12 +26,20 @@
   <a class="brand" href="./" aria-label="На главную">
     <svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3 28 9.5v13L16 29 4 22.5v-13Z" fill="var(--accent)" stroke="var(--ink)" stroke-width="2" stroke-linejoin="round"/><path d="M4 9.5 16 16l12-6.5M16 16v13" fill="none" stroke="var(--ink)" stroke-width="2" stroke-linejoin="round"/><path d="M16 16 28 9.5v13L16 29Z" fill="var(--ink)" opacity=".25"/></svg>
       </a>
-  <span class="crumb" id="crumb"></span>
+  <button class="switcher" id="switcher" aria-haspopup="true" aria-expanded="false" aria-controls="histMenu" title="Недавние файлы">
+    <span class="crumb" id="crumb"></span>
+    <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
   <div class="tactions">
-    <button class="btn ghost" id="demoBtn">Пример</button>
     <button class="btn primary" id="openBtn">Открыть<span class="lg"> файл</span></button>
   </div>
 </header>
+<div class="hist card" id="histMenu" hidden>
+  <div class="hhead"><b>Недавние</b><button class="x" id="histClose" aria-label="Закрыть">×</button></div>
+  <ul class="hlist" id="histList"></ul>
+  <p class="hempty" id="histEmpty">Открытые файлы появятся здесь. Хранятся только в этом браузере.</p>
+  <button class="btn hadd" id="histOpen">+ Открыть файл…</button>
+</div>
 <dialog class="card open-dlg" id="openDlg" aria-labelledby="dlgTitle">
   <button class="x" id="dlgClose" aria-label="Закрыть">×</button>
   <h2 id="dlgTitle">Открыть схематику</h2>
