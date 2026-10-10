@@ -92,17 +92,18 @@ export async function convert(p0,p1){
   // everything goes into typed buffers (see buf.js): triangles = positions + byte colours; boxes = centre, size,
   // colour; blobs = centre, radius, colour — no per-item objects
   const tri={pos:new GrowBuf(Float32Array),col:new GrowBuf(Uint8Array)};
+  const water={pos:new GrowBuf(Float32Array),col:new GrowBuf(Uint8Array)}; // its own (see-through) mesh
   const boxes={g:new GrowBuf(Float32Array),c:new GrowBuf(Uint8Array),n:0}, blobs={g:new GrowBuf(Float32Array),c:new GrowBuf(Uint8Array),n:0};
   const glassBoxes={g:new GrowBuf(Float32Array),c:new GrowBuf(Uint8Array),n:0}; // glass panes: own group, can turn see-through
   const blob=(px,py,pz,r,c)=>{blobs.g.push4(px,py,pz,r);blobs.c.push3(u8(c.r),u8(c.g),u8(c.b));blobs.n++;};
   const V=(x,y,z)=>new THREE.Vector3(x,y,z);
-  const pushTri=(a,b,c,col,inside)=>{
+  const pushTri=(a,b,c,col,inside,T=tri)=>{
     const n=new THREE.Vector3().subVectors(b,a).cross(new THREE.Vector3().subVectors(c,a));
     if(n.lengthSq()<1e-9)return;
     const cen=new THREE.Vector3().add(a).add(b).add(c).multiplyScalar(1/3);
     if(n.dot(cen.sub(inside))<0){const t=b;b=c;c=t;}
     const r=u8(col.r),g=u8(col.g),bl=u8(col.b);
-    for(const v of [a,b,c]){tri.pos.push3(v.x,v.y,v.z);tri.col.push3(r,g,bl);}
+    for(const v of [a,b,c]){T.pos.push3(v.x,v.y,v.z);T.col.push3(r,g,bl);}
   };
   const boxTo=(B,x0,y0,z0,x1,y1,z1,c)=>{B.g.push3((x0+x1)/2,(y0+y1)/2,(z0+z1)/2);
     B.g.push3(Math.max(x1-x0,.001),Math.max(y1-y0,.001),Math.max(z1-z0,.001));B.c.push3(u8(c.r),u8(c.g),u8(c.b));B.n++;};
@@ -157,7 +158,9 @@ export async function convert(p0,p1){
       if(!occ(x,y-1,z)){pushTri(Bt(0,0),Bt(1,0),Bt(1,1),cs,inside);pushTri(Bt(0,0),Bt(1,1),Bt(0,1),cs,inside);}
       break;}
     case 'liquid':{
-      const same=(xx,yy,zz)=>at(xx,yy,zz)===p;
+      // any level of the same liquid counts as "same": no inner walls between flowing and still water
+      const same=(xx,yy,zz)=>{const q=at(xx,yy,zz);return q>=0&&M.KIND[q]==='liquid'&&M.PAL[q].n===e.n;};
+      const T=e.n==='lava'?tri:water;
       const top=same(x,y+1,z)?1:.875, inside=V(x+.5,y+.4,z+.5);
       for(const [dx,dy,dz] of [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]]){
         if(occ(x+dx,y+dy,z+dz)||same(x+dx,y+dy,z+dz))continue;
@@ -167,7 +170,7 @@ export async function convert(p0,p1){
         if(dx)q=[V(X0,y,z),V(X0,y,z+1),V(X0,y+top,z+1),V(X0,y+top,z)];
         else if(dz)q=[V(x,y,Z0),V(x+1,y,Z0),V(x+1,y+top,Z0),V(x,y+top,Z0)];
         else {const yy=dy>0?y+top:y;q=[V(x,yy,z),V(x+1,yy,z),V(x+1,yy,z+1),V(x,yy,z+1)];}
-        pushTri(q[0],q[1],q[2],c,inside);pushTri(q[0],q[2],q[3],c,inside);
+        pushTri(q[0],q[1],q[2],c,inside,T);pushTri(q[0],q[2],q[3],c,inside,T);
       }
       break;}
     case 'layer': box(x,y,z,x+1,y+.125*(+(P.layers||1)),z+1,ct); break;
@@ -225,7 +228,7 @@ export async function convert(p0,p1){
     }
   }
   }
-  return {tri,boxes,blobs,glassBoxes};
+  return {tri,water,boxes,blobs,glassBoxes};
 }
 
 export {at,hash,idx};

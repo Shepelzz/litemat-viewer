@@ -45,6 +45,9 @@ Static web app: drop a `.litematic` file → toon-shaded, ink-outlined 3D illust
   blocks); glass panes go to `glassBoxes`. Both live in `GLASS` with two materials each (`glassMats`); the
   «Прозрачное стекло» toggle (on by default) swaps them (opacity .6, no depth write), turns off their shadows and hides them in the
   normal pass so what's behind the glass gets outlined. Choice kept in `localStorage.clearGlass`.
+- Water: its own triangle mesh (`s.water`), 30% see-through (`waterMat`, opacity .7, no depth write, no shadow
+  casting) — always on. It stays in the outline pass, so shorelines are inked and the bed under it isn't. Any level
+  of the same liquid counts as one body (no inner walls between flowing and still water). Lava stays opaque.
 - Dev only: `window.viewer` = {controls, camera, M, renderer, sun, scene, styled, invalidate, surfaceAtCenter, draw, rtNormal}.
 
 ## Social preview

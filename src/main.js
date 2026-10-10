@@ -155,6 +155,9 @@ function addInstChunked(group,geo,mat,items,stride,idxs,setMatrix,foliage=false)
 // ===== Glass: opaque (as before) or see-through, switched without a rebuild =====
 // See-through glass doesn't cast shadows and is left out of the normal/depth pass, so what's behind it gets outlined.
 const GLASS_OPACITY=.6;
+// water: 30% see-through, always. Stays in the outline pass (shorelines get inked, the bed under it doesn't) and casts
+// no shadow, so the bed is lit
+const waterMat=toon({vertexColors:true,transparent:true,opacity:.7,depthWrite:false});
 const glassMats={panel:[toon({vertexColors:true}),toon({vertexColors:true,transparent:true,opacity:GLASS_OPACITY,depthWrite:false})],
   pane:[toon({color:0xffffff}),toon({color:0xffffff,transparent:true,opacity:GLASS_OPACITY,depthWrite:false})]};
 let GLASS=[],clearGlass=true; // see-through by default; an explicit «off» is remembered
@@ -183,6 +186,13 @@ async function rebuild(p0=0,p1=1){
   if(my!==buildId)return false;
   await step(p0+(p1-p0)*0.82,'Собираю сцену',true);
   const toonMat=toon({vertexColors:true});
+  const waterVerts=s.water.pos.n/3;
+  if(waterVerts){const g=new THREE.BufferGeometry();
+    g.setAttribute('position',new THREE.BufferAttribute(s.water.pos.trim(),3));
+    g.setAttribute('color',new THREE.BufferAttribute(s.water.col.trim(),3,true));
+    s.water=null;
+    g.computeVertexNormals();packNormals(g);
+    for(const m of addChunked(styled,g,waterMat))m.castShadow=false;}
   const triVerts=s.tri.pos.n/3;
   if(triVerts){const g=new THREE.BufferGeometry();
     g.setAttribute('position',new THREE.BufferAttribute(s.tri.pos.trim(),3));
@@ -221,7 +231,7 @@ async function rebuild(p0=0,p1=1){
   if(GB.n)for(const m of addInstChunked(styled,new THREE.BoxGeometry(1,1,1),glassMats.pane[0],GB,6,Array.from({length:GB.n},(_,i)=>i),(i,m,o)=>{const k=i*6;
     m.fill(0,o,o+16);m[o]=GBG[k+3];m[o+5]=GBG[k+4];m[o+10]=GBG[k+5];m[o+12]=GBG[k];m[o+13]=GBG[k+1];m[o+14]=GBG[k+2];m[o+15]=1;})){m.userData.glass='pane';GLASS.push(m);}
   applyGlass();
-  triCount=triVerts/3+ggTris+glassTris+boxN*12+GB.n*12+keep.length*blobTris;
+  triCount=triVerts/3+waterVerts/3+ggTris+glassTris+boxN*12+GB.n*12+keep.length*blobTris;
   rawDirty=true; if(st.mode==='cube') await buildRaw();
   sync();
 }
