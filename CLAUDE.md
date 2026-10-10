@@ -40,6 +40,10 @@ Static web app: drop a `.litematic` file → toon-shaded, ink-outlined 3D illust
 - Foliage blobs are also on layer 1; the normal pass draws them again with `foliageNormalMat` (alpha 0 — needs
   `transparent:true`, three forces alpha 1 on opaque materials). Where a pixel and its 4 samples are all foliage the
   outline pass skips normal edges and needs a big depth jump → crowns get one silhouette, not a line per blob.
+- Glass: full glass blocks are merged into panels by a second `greedyMesh` pass (faces only against air / non-cube
+  blocks); glass panes go to `glassBoxes`. Both live in `GLASS` with two materials each (`glassMats`); the
+  «Прозрачное стекло» toggle (on by default) swaps them (opacity .6, no depth write), turns off their shadows and hides them in the
+  normal pass so what's behind the glass gets outlined. Choice kept in `localStorage.clearGlass`.
 - Dev only: `window.viewer` = {controls, camera, M, renderer, sun, scene, styled, invalidate, surfaceAtCenter, draw, rtNormal}.
 
 ## Social preview

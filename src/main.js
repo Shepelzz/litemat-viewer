@@ -3,7 +3,7 @@ import {OrbitControls} from 'three/examples/jsm/controls/OrbitControls.js';
 import './style.css';
 import {PROG,step} from './progress.js';
 import {readLitematic} from './litematic.js';
-import {M,setModel,convert,at,hash} from './convert.js';
+import {M,setModel,convert,at,hash,glassColor} from './convert.js';
 import {greedyMesh} from './greedy.js';
 import * as hist from './history.js';
 import {SHOWCASES} from './showcases.js';
@@ -134,13 +134,13 @@ function splitGeometry(g){
   }
   g.dispose();return out;
 }
-function addChunked(group,g,mat){for(const cg of splitGeometry(g)){const m=new THREE.Mesh(cg,mat);m.castShadow=m.receiveShadow=true;freeAfterUpload(m);group.add(m);}}
+function addChunked(group,g,mat){const out=[];for(const cg of splitGeometry(g)){const m=new THREE.Mesh(cg,mat);m.castShadow=m.receiveShadow=true;freeAfterUpload(m);group.add(m);out.push(m);}return out;}
 // instanced items → one InstancedMesh per chunk with a bounding sphere around its instances.
 // items: {n, g: Float32 per-item data (stride), c: Uint8 rgb}; centre = g[i*stride..+2]; setMatrix(i, mat4 array, offset)
 function addInstChunked(group,geo,mat,items,stride,idxs,setMatrix,foliage=false){
   const G=items.g.a,buckets=new Map();
   for(const i of idxs){const o=i*stride,k=chunkKey(G[o],G[o+2]);let b=buckets.get(k);if(!b)buckets.set(k,b=[]);b.push(i);}
-  const box=new THREE.Box3(),v=new THREE.Vector3(),C=items.c.a;
+  const box=new THREE.Box3(),v=new THREE.Vector3(),C=items.c.a,out=[];
   for(const list of buckets.values()){
     const cg=geo.clone();box.makeEmpty();
     const im=new THREE.InstancedMesh(cg,mat,list.length),M4=im.instanceMatrix.array,col=new Uint8Array(list.length*3);
@@ -148,10 +148,18 @@ function addInstChunked(group,geo,mat,items,stride,idxs,setMatrix,foliage=false)
     im.instanceColor=new THREE.InstancedBufferAttribute(col,3,true);
     cg.boundingSphere=box.getBoundingSphere(new THREE.Sphere());cg.boundingSphere.radius+=2;
     im.frustumCulled=true; // three r147 turns culling off for InstancedMesh; our sphere covers the chunk
-    im.castShadow=im.receiveShadow=true;if(foliage)im.layers.enable(1);freeAfterUpload(im);group.add(im);
+    im.castShadow=im.receiveShadow=true;if(foliage)im.layers.enable(1);freeAfterUpload(im);group.add(im);out.push(im);
   }
-  geo.dispose();
+  geo.dispose();return out;
 }
+// ===== Glass: opaque (as before) or see-through, switched without a rebuild =====
+// See-through glass doesn't cast shadows and is left out of the normal/depth pass, so what's behind it gets outlined.
+const GLASS_OPACITY=.6;
+const glassMats={panel:[toon({vertexColors:true}),toon({vertexColors:true,transparent:true,opacity:GLASS_OPACITY,depthWrite:false})],
+  pane:[toon({color:0xffffff}),toon({color:0xffffff,transparent:true,opacity:GLASS_OPACITY,depthWrite:false})]};
+let GLASS=[],clearGlass=true; // see-through by default; an explicit «off» is remembered
+try{clearGlass=localStorage.getItem('clearGlass')!=='0';}catch{}
+function applyGlass(){for(const m of GLASS){m.material=glassMats[m.userData.glass][clearGlass?1:0];m.castShadow=!clearGlass;}}
 // Int8 normalized normals (4× smaller than float) from a float normal attribute
 function packNormals(g){const a=g.attributes.normal.array,q=new Int8Array(a.length);for(let i=0;i<a.length;i++)q[i]=Math.round(a[i]*127);
   g.setAttribute('normal',new THREE.BufferAttribute(q,3,true));}
@@ -170,7 +178,7 @@ let buildId=0;
 async function rebuild(p0=0,p1=1){
   if(!loaded)return;
   const my=++buildId;
-  clear(styled);clear(cubes);styled.position.y=cubes.position.y=-M.CUT;
+  clear(styled);clear(cubes);GLASS=[];styled.position.y=cubes.position.y=-M.CUT;
   const s=await convert(p0,p0+(p1-p0)*0.8);
   if(my!==buildId)return false;
   await step(p0+(p1-p0)*0.82,'Собираю сцену',true);
@@ -188,6 +196,15 @@ async function rebuild(p0=0,p1=1){
   if(my!==buildId)return false;
   const ggTris=gg.attributes.position.count/3;
   addChunked(styled,gg,toonMat);
+  // glass blocks → merged panels (faces only where glass meets air or a non-cube block), like the cube mesher
+  const solidG=new Uint8Array(M.PAL.length),occG=new Uint8Array(M.PAL.length);
+  for(let i=0;i<M.PAL.length;i++){solidG[i]=M.KIND[i]==='glass'?1:0;occG[i]=(M.KIND[i]==='glass'||M.KIND[i]==='cube')?1:0;}
+  let glassTris=0;
+  if(solidG.some(Boolean)){const colG=M.COLS.map(glassColor);
+    const gl=await greedyMesh(solidG,occG,colG,colG,p0+(p1-p0)*0.95,p0+(p1-p0)*0.96,'Склеиваю стекло');
+    if(my!==buildId)return false;
+    glassTris=gl.attributes.position.count/3;
+    for(const m of addChunked(styled,gl,glassMats.panel[0])){m.userData.glass='panel';GLASS.push(m);}}
   await step(p0+(p1-p0)*0.96,'Собираю сцену',true);
   // boxes: centre + size (stride 6) → scale/translate matrix
   const B=s.boxes,BG=B.g.a,boxN=B.n;
@@ -203,7 +220,11 @@ async function rebuild(p0=0,p1=1){
   const blobTris=blob.attributes.position.count/3;
   if(keep.length)addInstChunked(styled,blob,toon({color:0xffffff}),L,4,keep,(i,m,o)=>{const k=i*4,r=LG[k+3]*grow;
     m.fill(0,o,o+16);m[o]=r;m[o+5]=r*.9;m[o+10]=r;m[o+12]=LG[k];m[o+13]=LG[k+1];m[o+14]=LG[k+2];m[o+15]=1;},true);
-  triCount=triVerts/3+ggTris+boxN*12+keep.length*blobTris;
+  const GB=s.glassBoxes,GBG=GB.g.a;
+  if(GB.n)for(const m of addInstChunked(styled,new THREE.BoxGeometry(1,1,1),glassMats.pane[0],GB,6,Array.from({length:GB.n},(_,i)=>i),(i,m,o)=>{const k=i*6;
+    m.fill(0,o,o+16);m[o]=GBG[k+3];m[o+5]=GBG[k+4];m[o+10]=GBG[k+5];m[o+12]=GBG[k];m[o+13]=GBG[k+1];m[o+14]=GBG[k+2];m[o+15]=1;})){m.userData.glass='pane';GLASS.push(m);}
+  applyGlass();
+  triCount=triVerts/3+ggTris+glassTris+boxN*12+GB.n*12+keep.length*blobTris;
   rawDirty=true; if(st.mode==='cube') await buildRaw();
   sync();
 }
@@ -273,6 +294,8 @@ function sync(){
 $('mCube').onclick=async()=>{st.mode='cube';if(rawDirty){startProgress('');try{await buildRaw();}finally{stopProgress();}}sync();};$('mToon').onclick=()=>{st.mode='toon';sync();};
 $('lines').addEventListener('input',sync);
 $('shadows').addEventListener('input',sync);
+$('glass').checked=clearGlass;
+$('glass').addEventListener('input',()=>{clearGlass=$('glass').checked;try{localStorage.setItem('clearGlass',clearGlass?'1':'0');}catch{}applyGlass();sync();});
 const VIEW={dir:[-0.55,0.62,0.56],fh:40};
 camera.position.set(VIEW.dir[0]*200,VIEW.dir[1]*200,VIEW.dir[2]*200);
 // model + plinth extents in screen-plane units (u right, v up), relative to the orbit target
@@ -397,6 +420,7 @@ function draw(){
     U.fogStart.value=zt;U.fogRange.value=zt*1.5;U.fogMax.value=.45; } // fog: none up to the target, ~30% at 2× its distance
   if(st.mode==='cube'){renderer.setRenderTarget(null);renderer.render(scene,camera);return;}
   renderer.setRenderTarget(rtColor);renderer.render(scene,camera);
+  if(clearGlass)for(const m of GLASS)m.visible=false; // see-through glass: outlines come from what's behind it
   scene.overrideMaterial=normalMat;const bg=scene.background;scene.background=new THREE.Color(.5,.5,1);
   renderer.setRenderTarget(rtNormal);renderer.render(scene,camera);
   // foliage again (layer 1) on top at the same depth, with alpha 0 — the outline pass reads that as "leaves"
@@ -404,6 +428,7 @@ function draw(){
   renderer.render(scene,camera);
   renderer.autoClear=true;camera.layers.set(0);
   scene.overrideMaterial=null;scene.background=bg;
+  if(clearGlass)for(const m of GLASS)m.visible=true;
   renderer.setRenderTarget(null);renderer.render(postScene,postCam);
 }
 // small JPEG of the area the model is framed in; drawn and read in one go (no preserveDrawingBuffer needed)

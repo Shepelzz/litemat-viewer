@@ -83,6 +83,9 @@ const occ=(x,y,z)=>{const p=at(x,y,z);return p>=0&&M.KIND[p]==='cube';};
 const hash=(x,y,z)=>{let h=(x*374761393+y*668265263+z*1442695041)|0;h=Math.imul(h^(h>>>13),1274126177);return((h>>>0)%10000)/10000;};
 const DIR={north:[0,-1],south:[0,1],east:[1,0],west:[-1,0]};
 const PLANT_GREEN=new THREE.Color('#7fa65a');
+// glass tint: the block's side colour pulled towards pale blue (used by the glass mesher in main.js and by panes)
+const GLASS_TINT=new THREE.Color('#b9d6de');
+export const glassColor=c=>c.clone().lerp(GLASS_TINT,.6);
 const LEFT={north:'west',west:'south',south:'east',east:'north'}, RIGHT={north:'east',east:'south',south:'west',west:'north'};
 
 export async function convert(p0,p1){
@@ -90,6 +93,7 @@ export async function convert(p0,p1){
   // colour; blobs = centre, radius, colour — no per-item objects
   const tri={pos:new GrowBuf(Float32Array),col:new GrowBuf(Uint8Array)};
   const boxes={g:new GrowBuf(Float32Array),c:new GrowBuf(Uint8Array),n:0}, blobs={g:new GrowBuf(Float32Array),c:new GrowBuf(Uint8Array),n:0};
+  const glassBoxes={g:new GrowBuf(Float32Array),c:new GrowBuf(Uint8Array),n:0}; // glass panes: own group, can turn see-through
   const blob=(px,py,pz,r,c)=>{blobs.g.push4(px,py,pz,r);blobs.c.push3(u8(c.r),u8(c.g),u8(c.b));blobs.n++;};
   const V=(x,y,z)=>new THREE.Vector3(x,y,z);
   const pushTri=(a,b,c,col,inside)=>{
@@ -100,8 +104,9 @@ export async function convert(p0,p1){
     const r=u8(col.r),g=u8(col.g),bl=u8(col.b);
     for(const v of [a,b,c]){tri.pos.push3(v.x,v.y,v.z);tri.col.push3(r,g,bl);}
   };
-  const box=(x0,y0,z0,x1,y1,z1,c)=>{boxes.g.push3((x0+x1)/2,(y0+y1)/2,(z0+z1)/2);
-    boxes.g.push3(Math.max(x1-x0,.001),Math.max(y1-y0,.001),Math.max(z1-z0,.001));boxes.c.push3(u8(c.r),u8(c.g),u8(c.b));boxes.n++;};
+  const boxTo=(B,x0,y0,z0,x1,y1,z1,c)=>{B.g.push3((x0+x1)/2,(y0+y1)/2,(z0+z1)/2);
+    B.g.push3(Math.max(x1-x0,.001),Math.max(y1-y0,.001),Math.max(z1-z0,.001));B.c.push3(u8(c.r),u8(c.g),u8(c.b));B.n++;};
+  const box=(x0,y0,z0,x1,y1,z1,c)=>boxTo(boxes,x0,y0,z0,x1,y1,z1,c);
   // box in block-local coords, rotated so that local -z points to `facing`
   const rbox=(x,y,z,facing,u0,y0,w0,u1,y1,w1,c)=>{ // u: across, w: depth from facing side (0) to back (1)
     let X0,X1,Z0,Z1;
@@ -171,13 +176,13 @@ export async function convert(p0,p1){
       blob(x+.5,y+.28,z+.5,.3+.08*hh,ct.clone().lerp(PLANT_GREEN,/(sapling|grass|fern|bush|vine|kelp|seagrass|cane|roots|dripleaf|azalea|lily_pad|crop|wheat|carrots|potatoes|beetroots)/.test(e.n)?.4:0));
       break;}
     case 'slab': if(P.type==='top')box(x,y+.5,z,x+1,y+1,z+1,cs); else box(x,y,z,x+1,y+.5,z+1,cs); break;
-    case 'glass': box(x,y,z,x+1,y+1,z+1,cs.clone().lerp(new THREE.Color('#b9d6de'),.6)); break;
+    case 'glass': break; // full glass blocks are merged into panels by the glass mesher (main.js), like cubes
     case 'pane':{
-      const bars=e.n==='iron_bars', c=bars?cs.clone().multiplyScalar(.8):cs.clone().lerp(new THREE.Color('#b9d6de'),.6), t=bars?.08:.1;
-      const a=.5-t/2,b=.5+t/2;
-      box(x+a,y,z+a,x+b,y+1,z+b,c);
-      if(P.north==='true')box(x+a,y,z,x+b,y+1,z+a,c); if(P.south==='true')box(x+a,y,z+b,x+b,y+1,z+1,c);
-      if(P.west==='true')box(x,y,z+a,x+a,y+1,z+b,c); if(P.east==='true')box(x+b,y,z+a,x+1,y+1,z+b,c);
+      const bars=e.n==='iron_bars', c=bars?cs.clone().multiplyScalar(.8):glassColor(cs), t=bars?.08:.1;
+      const a=.5-t/2,b=.5+t/2, B=bars?boxes:glassBoxes, pb=(...v)=>boxTo(B,...v);
+      pb(x+a,y,z+a,x+b,y+1,z+b,c);
+      if(P.north==='true')pb(x+a,y,z,x+b,y+1,z+a,c); if(P.south==='true')pb(x+a,y,z+b,x+b,y+1,z+1,c);
+      if(P.west==='true')pb(x,y,z+a,x+a,y+1,z+b,c); if(P.east==='true')pb(x+b,y,z+a,x+1,y+1,z+b,c);
       break;}
     case 'fence':{
       box(x+.375,y,z+.375,x+.625,y+1,z+.625,cs);
@@ -220,7 +225,7 @@ export async function convert(p0,p1){
     }
   }
   }
-  return {tri,boxes,blobs};
+  return {tri,boxes,blobs,glassBoxes};
 }
 
 export {at,hash,idx};
