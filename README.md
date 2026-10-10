@@ -22,7 +22,7 @@ npm run preview    # проверить сборку: http://localhost:4173
 
 ## Деплой
 
-**GitHub Pages (проще всего).** Запушь репозиторий на GitHub в ветку `main`, затем Settings → Pages → Source: *GitHub Actions*. Workflow `.github/workflows/deploy.yml` соберёт и выложит сайт при каждом пуше.
+**Render — Static Site** (так сейчас и задеплоено): Build Command `npm run build`, Publish Directory `dist`, переменная `SITE_URL=https://<адрес сайта>` для превью ссылок.
 
 **Свой сервер через Docker:**
 
