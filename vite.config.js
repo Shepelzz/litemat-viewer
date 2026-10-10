@@ -1,8 +1,14 @@
 import { defineConfig } from 'vite';
 
+// OG/Twitter crawlers need absolute URLs. Render exposes RENDER_EXTERNAL_URL at build time;
+// SITE_URL overrides it (e.g. a custom domain). Without either, tags fall back to root-relative paths.
+const SITE_URL = (process.env.SITE_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '');
+const siteUrl = { name: 'site-url', transformIndexHtml: html => html.replaceAll('__SITE_URL__', SITE_URL) };
+
 // base: './' makes the build work from any path (domain root, GitHub Pages subfolder, file share)
 export default defineConfig({
   base: './',
+  plugins: [siteUrl],
   server: { port: 5173, host: true },
   preview: { port: 4173, host: true },
   build: { target: 'es2020', chunkSizeWarningLimit: 1200 },

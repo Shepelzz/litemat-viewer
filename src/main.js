@@ -332,7 +332,7 @@ function thumbnail(){
 }
 
 // dev-only debug handle: window.viewer.{controls,camera,M,surfaceAtCenter,invalidate}
-if(import.meta.env.DEV)window.viewer={controls,camera,M,surfaceAtCenter,invalidate,THREE,renderer,sun,scene,styled};
+if(import.meta.env.DEV)window.viewer={controls,camera,M,surfaceAtCenter,invalidate,THREE,renderer,sun,scene,styled,draw};
 
 // ===== Progress overlay =====
 function fmtSec(s){return s<1?'меньше секунды':s<60?`≈ ${Math.ceil(s)} с`:`≈ ${Math.floor(s/60)} мин ${Math.ceil(s%60)} с`;}

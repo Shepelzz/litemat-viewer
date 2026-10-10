@@ -31,7 +31,12 @@ Static web app: drop a `.litematic` file → toon-shaded, ink-outlined 3D illust
 - Render size capped at ~5 MP (`resize()`), since every frame is 3 full-screen passes.
 - Controls: mouse/trackpad left drag = pan, right drag = rotate; touch: one finger = rotate, two = pinch/pan; orbit pivot snaps to the block surface on
   the camera axis at the start of each gesture (`surfaceAtCenter`).
-- Dev only: `window.viewer` = {controls, camera, M, renderer, sun, scene, styled, invalidate, surfaceAtCenter}.
+- Dev only: `window.viewer` = {controls, camera, M, renderer, sun, scene, styled, invalidate, surfaceAtCenter, draw}.
+
+## Social preview
+- `public/og.png` (1200×630) is a render of the demo + title, composed in the browser via `window.viewer.draw()`.
+- OG/Twitter tags in `index.html` use `__SITE_URL__`, replaced at build by the `site-url` plugin in `vite.config.js`
+  from `SITE_URL` or Render's `RENDER_EXTERNAL_URL`.
 
 ## Conventions
 - three.js is pinned to 0.147.0 (legacy colour management; colours are authored as displayed). Upgrading needs
