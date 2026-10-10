@@ -385,7 +385,8 @@ const fileIn=$('file'), dlg=$('openDlg'), panel=$('panel');
 const finePointer=matchMedia('(pointer:fine)');
 function showErr(t){const el=dlg.open?$('msg3'):document.body.classList.contains('has-model')?$('msg2'):$('msg');el.className='msg err';el.textContent=t;}
 function clearErr(){$('msg').textContent='';$('msg2').textContent='';$('msg3').textContent='';}
-// src: {demo:true} | {id} (from history) | {} (a new file → saved to history); + shareId if it has a public link
+// src: {demo:true} | {id} (from history) | {} (a new file → saved to history);
+// + shareId (has a public link), viewOnly (someone else's shared model: no rename / share), sharedBy (their name)
 async function openBuffer(buf,label,src={}){
   clearErr();startProgress(label);
   let m;
@@ -393,13 +394,16 @@ async function openBuffer(buf,label,src={}){
   catch(e){console.error(e);showErr(e.message||'Не удалось прочитать файл');return false;}
   finally{stopProgress();}
   document.body.classList.toggle('is-demo',!!src.demo);
+  document.body.classList.toggle('view-only',!!src.viewOnly);
   $('crumb').textContent=src.demo?'Demo':label;$('title').textContent=label; // project name (renamable), not the name inside the file
+  if(src.viewOnly&&src.sharedBy)$('meta').textContent+=` · поделился: ${src.sharedBy}`;
   const thumb=thumbnail();
-  CUR_BUF=buf;CUR_NAME=label;CUR_SHARE=src.shareId||null;
+  CUR_BUF=buf;CUR_NAME=label;CUR_SHARE=src.shareId||null;CUR_VIEWONLY=!!src.viewOnly;
   if(src.demo){CUR='demo';DEMO.thumb=thumb||DEMO.thumb;try{localStorage.setItem('demoThumb',DEMO.thumb||'');}catch{}}
   else{
     CUR=src.id||await hist.fileId(buf);
-    try{await hist.save({id:CUR,name:label,dims:`${M.NX}×${M.NY}×${M.NZ}`,author:m.author||'',thumb,data:buf,...(src.shareId?{shareId:src.shareId}:{})});}
+    try{await hist.save({id:CUR,name:label,dims:`${M.NX}×${M.NY}×${M.NZ}`,author:m.author||'',thumb,data:buf,
+      shareId:src.shareId||null,viewOnly:!!src.viewOnly,sharedBy:src.sharedBy||null});}
     catch(e){console.warn('history not saved',e);}
   }
   setShareUrl(src.shareId||null);
@@ -422,7 +426,7 @@ dlg.addEventListener('click',e=>{if(e.target===dlg)dlg.close();});
 $('dlgZone').onclick=()=>fileIn.click();
 $('dlgZone').onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();fileIn.click();}};
 fileIn.onchange=()=>{openFile(fileIn.files[0]);fileIn.value='';};
-let CUR=null,CUR_BUF=null,CUR_NAME='',CUR_SHARE=null;
+let CUR=null,CUR_BUF=null,CUR_NAME='',CUR_SHARE=null,CUR_VIEWONLY=false;
 const DEMO={name:'Demo',dims:'20×45×26',thumb:null};
 try{DEMO.thumb=localStorage.getItem('demoThumb')||null;}catch{}
 async function openSample(){const res=await fetch(import.meta.env.BASE_URL+'sample.litematic');if(!res.ok)throw new Error(res.status);return openBuffer(await res.arrayBuffer(),'upd_plushki',{demo:true});}
@@ -430,11 +434,11 @@ $('sample').onclick=()=>openSample().catch(()=>showErr('Не удалось за
 async function openFromHistory(id){
   const e=await hist.get(id).catch(()=>null);
   if(!e){showErr('Файл не найден в истории');return false;}
-  return openBuffer(e.data,e.name,{id,shareId:e.shareId});
+  return openBuffer(e.data,e.name,{id,shareId:e.shareId,viewOnly:e.viewOnly,sharedBy:e.sharedBy});
 }
 
 // ===== Share: upload to the server (MySQL), put ?s=<id> into the address bar =====
-const CONFIG={share:false,maxBytes:0};
+const CONFIG={share:false,maxBytes:0,googleClientId:null};
 // the address bar always matches what's on screen: ?s=<id> for a shared model, nothing otherwise
 function setShareUrl(id){
   const u=id?new URL('./?s='+id,document.baseURI):new URL(location.href);
@@ -468,7 +472,8 @@ function shareShowLink(url,note){
   $('shareUrl').focus();$('shareUrl').select();
 }
 async function shareCurrent(){
-  if(!CUR_BUF)return;
+  if(!CUR_BUF||CUR_VIEWONLY)return;
+  if(CUR!=='demo'&&!ME)return openLogin(shareCurrent,'Чтобы поделиться моделью, войди через Google. Ссылка будет привязана к твоему аккаунту — обновлять и переименовывать её сможешь только ты.');
   $('shareTitle').textContent=CUR==='demo'?'Поделиться демо':`Поделиться «${CUR_NAME}»`;
   $('shareErr').textContent='';$('shareProg').hidden=false;$('shareDone').hidden=true;$('shareCopy').textContent='Скопировать';
   shareStage('Загружаю',0);shareDlg.showModal();
@@ -477,7 +482,7 @@ async function shareCurrent(){
   try{
     const j=await uploadShare(CUR_BUF,CUR_NAME,f=>f<1?shareStage('Загружаю',f*0.9):shareStage('Сохраняю в базу',null));
     shareStage('Готово',1);
-    CUR_SHARE=j.id;await hist.save({id:CUR,shareId:j.id}).catch(()=>{});
+    CUR_SHARE=j.id;await hist.save({id:CUR,shareId:j.id,viewOnly:false,sharedBy:null}).catch(()=>{});
     setShareUrl(j.id);
     shareShowLink(location.href,j.updated?'Ссылка та же, что и раньше — файл в ней обновлён.':'Ссылка готова. Кто её откроет, увидит эту модель.');
   }catch(e){$('shareProg').hidden=true;$('shareErr').textContent=e.message||'Не удалось поделиться';}
@@ -494,7 +499,7 @@ $('shareNative').onclick=()=>navigator.share({title:CUR==='demo'?'Litematica Vie
 
 // ===== Rename (pencil next to the project name; not for the demo) =====
 function startRename(){
-  if(CUR==='demo'||!CUR)return;
+  if(CUR==='demo'||!CUR||CUR_VIEWONLY)return;
   const inp=$('titleInput');inp.value=CUR_NAME;inp.hidden=false;$('title').hidden=true;panel.classList.add('renaming');
   inp.focus();inp.select();
 }
@@ -508,6 +513,7 @@ async function endRename(save){
   // keep the server copy in step, so re-sharing under this name overwrites the same link
   if(CUR_SHARE&&CONFIG.share)fetch('api/shares/'+CUR_SHARE,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})})
     .then(r=>{if(!r.ok)return r.json().then(j=>toast(j.error||'На сервере имя не обновилось',true));}).catch(()=>{});
+  else if(CUR_SHARE&&!ME)toast('Имя поменялось у тебя; чтобы и в ссылке — войди',true);
 }
 $('renameBtn').onclick=e=>{e.stopPropagation();startRename();};
 $('titleInput').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();endRename(true);}else if(e.key==='Escape'){e.preventDefault();endRename(false);}};
@@ -516,8 +522,59 @@ async function openShared(id){
   const res=await fetch('api/shares/'+encodeURIComponent(id));
   if(!res.ok)throw new Error(res.status===404?'Ссылка не найдена — возможно, её удалили':'Сервер не отдал файл');
   const name=decodeURIComponent(res.headers.get('X-Name')||'')||'schematic';
-  return openBuffer(await res.arrayBuffer(),name,{shareId:id});
+  const sharedBy=decodeURIComponent(res.headers.get('X-Author')||'')||null;
+  // someone else's link → view only; your own → full controls (rename, re-share)
+  return openBuffer(await res.arrayBuffer(),name,{shareId:id,viewOnly:res.headers.get('X-Mine')!=='1',sharedBy});
 }
+
+// ===== Google sign-in (header button / avatar; asked for when sharing) =====
+let ME=null,gsiP=null,afterLogin=null;
+const loginDlg=$('loginDlg'),acctMenu=$('acctMenu');
+function renderAccount(){
+  // one round button right of «Открыть»: an abstract user when signed out (→ sign in), your avatar when signed in (→ menu)
+  const b=$('acctBtn');b.hidden=!CONFIG.share;b.classList.toggle('in',!!ME);
+  const label=ME?`Аккаунт: ${ME.name||''}`:'Войти';b.title=label;b.setAttribute('aria-label',label);
+  if(!ME){acctMenu.hidden=true;$('acctImg').hidden=true;$('acctInitial').textContent='';return;}
+  $('acctImg').hidden=!ME.avatar;if(ME.avatar)$('acctImg').src=ME.avatar;
+  $('acctInitial').textContent=ME.avatar?'':(ME.name||'?').trim().charAt(0).toUpperCase();
+  $('acctName').textContent=ME.name||'';$('acctEmail').textContent=ME.email||'';
+}
+// Google Identity Services script, loaded only when someone is about to sign in
+function gsi(){
+  if(window.google?.accounts?.id)return Promise.resolve(window.google.accounts.id);
+  return gsiP||=new Promise((res,rej)=>{const sc=document.createElement('script');sc.src='https://accounts.google.com/gsi/client';sc.async=true;
+    sc.onload=()=>res(window.google.accounts.id);sc.onerror=()=>{gsiP=null;rej(new Error('Не загрузился вход Google'));};document.head.append(sc);});
+}
+async function openLogin(then=null,why=null){
+  afterLogin=then;$('loginErr').textContent='';
+  $('loginWhy').textContent=why||'Войди через Google, чтобы делиться моделями. Ссылки будут привязаны к твоему аккаунту — обновлять и переименовывать их сможешь только ты.';
+  loginDlg.showModal();
+  try{
+    const id=await gsi();
+    id.initialize({client_id:CONFIG.googleClientId,callback:onGoogleCredential,auto_select:false,cancel_on_tap_outside:true});
+    $('gBtn').replaceChildren();
+    id.renderButton($('gBtn'),{theme:matchMedia('(prefers-color-scheme: dark)').matches?'filled_black':'outline',size:'large',text:'signin_with',shape:'pill',locale:'ru'});
+  }catch(e){$('loginErr').textContent=e.message;}
+}
+async function onGoogleCredential(r){
+  try{
+    const res=await fetch('api/auth/google',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({credential:r.credential})});
+    const j=await res.json().catch(()=>({}));
+    if(!res.ok||!j.user)throw new Error(j.error||'Не получилось войти');
+    ME=j.user;renderAccount();loginDlg.close();toast(`Привет, ${ME.name}!`);
+    const next=afterLogin;afterLogin=null;next?.();
+  }catch(e){$('loginErr').textContent=e.message;}
+}
+$('loginClose').onclick=()=>loginDlg.close();
+loginDlg.addEventListener('close',()=>{afterLogin=null;});
+loginDlg.addEventListener('click',e=>{if(e.target===loginDlg)loginDlg.close();});
+$('acctBtn').onclick=e=>{e.stopPropagation();if(!ME)return openLogin();acctMenu.hidden=!acctMenu.hidden;$('acctBtn').setAttribute('aria-expanded',String(!acctMenu.hidden));};
+addEventListener('click',e=>{if(!acctMenu.hidden&&!acctMenu.contains(e.target)){acctMenu.hidden=true;$('acctBtn').setAttribute('aria-expanded','false');}});
+$('logoutBtn').onclick=async()=>{
+  await fetch('api/auth/logout',{method:'POST'}).catch(()=>{});
+  try{window.google?.accounts?.id?.disableAutoSelect();}catch{}
+  ME=null;renderAccount();toast('Ты вышел из аккаунта');
+};
 
 // ===== History menu (the model name in the header) =====
 const menu=$('histMenu'),sw=$('switcher');
@@ -555,7 +612,12 @@ addEventListener('click',e=>{if(!menu.hidden&&!menu.contains(e.target))closeMenu
 addEventListener('keydown',e=>{if(e.key==='Escape')closeMenu();});
 
 // start: a shared link (?s=<id>) wins; else the last model this browser looked at; first visit → demo
-fetch('api/config').then(r=>r.ok?r.json():null).then(c=>{if(c?.share){Object.assign(CONFIG,c);document.body.classList.add('can-share');}}).catch(()=>{});
+fetch('api/config').then(r=>r.ok?r.json():null).then(async c=>{
+  if(!c?.share)return;
+  Object.assign(CONFIG,c);document.body.classList.add('can-share');
+  ME=(await fetch('api/auth/me').then(r=>r.json()).catch(()=>null))?.user||null;
+  renderAccount();
+}).catch(()=>{});
 (async()=>{
   const sid=new URLSearchParams(location.search).get('s');
   if(sid){

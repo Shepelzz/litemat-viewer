@@ -22,5 +22,28 @@ export const MIGRATIONS = [
       'ALTER TABLE litemat_app_shares ADD COLUMN uploader CHAR(64) NULL, ADD COLUMN updated_at BIGINT NULL',
       'CREATE INDEX litemat_app_shares_owner ON litemat_app_shares (uploader, name, size)'
     ]
+  },
+  {
+    id: '003_litemat_app_users',
+    // Google sign-in: shares belong to a user from now on (uploader/IP from 002 is no longer used)
+    sql: [
+      `CREATE TABLE IF NOT EXISTS litemat_app_users (
+        id CHAR(16) NOT NULL PRIMARY KEY,
+        email VARCHAR(255) NULL,
+        name VARCHAR(255) NOT NULL,
+        avatar VARCHAR(512) NULL,
+        created_at BIGINT NOT NULL,
+        last_login_at BIGINT NOT NULL
+      ) DEFAULT CHARSET=utf8mb4`,
+      `CREATE TABLE IF NOT EXISTS litemat_app_sessions (
+        token CHAR(32) NOT NULL PRIMARY KEY,
+        user_id CHAR(16) NOT NULL,
+        created_at BIGINT NOT NULL,
+        expires_at BIGINT NOT NULL,
+        INDEX litemat_app_sessions_user (user_id)
+      ) DEFAULT CHARSET=utf8mb4`,
+      'ALTER TABLE litemat_app_shares ADD COLUMN user_id CHAR(16) NULL',
+      'CREATE INDEX litemat_app_shares_user ON litemat_app_shares (user_id, name, size)'
+    ]
   }
 ];

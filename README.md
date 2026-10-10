@@ -31,10 +31,11 @@ npm run preview    # проверить сборку: http://localhost:4173
 - Build Command: `npm ci && npm run build`
 - Start Command: `npm start`
 - Environment: `DATABASE_URL=mysql://user:pass@host:3306/db` (или `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`/`DB_NAME`),
-  при необходимости `DB_SSL=true`; `SITE_URL=https://<адрес сайта>` для превью ссылок.
+  при необходимости `DB_SSL=true`; `GOOGLE_CLIENT_ID` (вход через Google — без него «Поделиться» выключено;
+  адрес сайта нужно добавить в Authorized JavaScript origins этого клиента); `SITE_URL=https://<адрес сайта>` для превью ссылок.
 
 Таблицы создаются сами при старте (миграции в `server/migrations.js`, всё с префиксом `litemat_app_`), в логе:
-`🗄  MySQL подключён…`. Нет переменных или база недоступна — сайт работает, кнопки «Поделиться» нет.
+`🗄  MySQL подключён…` и `🔑 Вход через Google включён`. Нет базы или `GOOGLE_CLIENT_ID` — сайт работает, входа и «Поделиться» нет.
 
 **Только просмотр, без «Поделиться»** — любой хостинг статики (GitHub Pages через `.github/workflows/deploy.yml`,
 Render Static Site, Netlify…): команда сборки `npm run build`, папка `dist`.

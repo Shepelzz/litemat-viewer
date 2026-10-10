@@ -48,8 +48,21 @@
   </button>
   <div class="tactions">
     <button class="btn primary" id="openBtn">Открыть<span class="lg"> файл</span></button>
+    <button class="acct-btn" id="acctBtn" hidden aria-haspopup="true" aria-expanded="false" title="Войти" aria-label="Войти"><svg class="acct-anon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="9" r="3.6" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5.5 19.2c1.3-3 3.8-4.4 6.5-4.4s5.2 1.4 6.5 4.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><img id="acctImg" alt="" referrerpolicy="no-referrer" hidden><span id="acctInitial"></span></button>
   </div>
 </header>
+<div class="acct-menu card" id="acctMenu" hidden>
+  <b id="acctName"></b>
+  <small id="acctEmail"></small>
+  <button class="btn" id="logoutBtn">Выйти</button>
+</div>
+<dialog class="card open-dlg login-dlg" id="loginDlg" aria-labelledby="loginTitle">
+  <button class="x" id="loginClose" aria-label="Закрыть">×</button>
+  <h2 id="loginTitle">Вход</h2>
+  <p class="hint" id="loginWhy">Войди через Google, чтобы делиться моделями. Ссылки будут привязаны к твоему аккаунту — обновлять и переименовывать их сможешь только ты.</p>
+  <div class="g-btn" id="gBtn"></div>
+  <div class="msg err" id="loginErr" role="status"></div>
+</dialog>
 <div class="hist card" id="histMenu" hidden>
   <div class="hhead"><b>Недавние</b><button class="x" id="histClose" aria-label="Закрыть">×</button></div>
   <ul class="hlist" id="histList"></ul>

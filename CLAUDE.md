@@ -53,14 +53,19 @@ a small Express server (`server/`) serves `dist/` and the share API backed by My
 - Files leave the browser only through «Поделиться» (explicit click). Keep it that way.
 
 ## Sharing (server/)
-- `POST /api/shares?name=` (raw .litematic) → `{id, updated}`; id is random (16 hex). Same uploader (sha256 of the
-  IP, never the raw IP) + same name + same size → that row is overwritten and keeps its id. `PATCH /api/shares/:id`
-  `{name}` renames (uploader only). `GET /api/shares/:id` → bytes (+ `X-Name`), `no-cache` + ETag. `GET /api/config` → `{share, maxBytes}`; the page shows the button only
+- Google sign-in (`server/auth.js`, like sea-battle): GIS on the page → `POST /api/auth/google {credential}` → user in
+  `litemat_app_users` (id = 'g' + sha256(sub)), session token in `litemat_app_sessions` + httpOnly cookie `lm_session`.
+  Sharing needs MySQL **and** `GOOGLE_CLIENT_ID`; `/api/config` → `{share, maxBytes, googleClientId}`.
+- `POST /api/shares?name=` (signed in) → `{id, updated}`; id is random (16 hex). Same user + same name + same size →
+  that row is overwritten and keeps its id. `PATCH /api/shares/:id {name}` renames (owner only).
+  `GET /api/shares/:id` → bytes + `X-Name`, `X-Author` (sharer's Google name), `X-Mine` (viewer owns it). `GET /api/config` → `{share, maxBytes}`; the page shows the button only
   when `share` is true. `GET /?s=:id` injects the model name into og/twitter titles.
 - DB env like our other Render apps: `DATABASE_URL` or `DB_HOST/DB_PORT/DB_USER/DB_PASSWORD/DB_NAME`, `DB_SSL`, `DB_POOL`.
   No env or no connection → sharing off, server keeps running.
-- Tables are prefixed `litemat_app_` (shared database). Schema changes = new entry in `server/migrations.js`
+- Tables are prefixed `litemat_app_` (shared database); `uploader` (IP hash) from migration 002 is unused since 003. Schema changes = new entry in `server/migrations.js`
   (never edit an applied one); applied ids are stored in `litemat_app_migrations`.
-- Frontend: «Поделиться» sits at the bottom of the project panel and opens a dialog (XHR upload progress → «saving»
-  → link). The pencil next to the project name renames it locally and, if shared, on the server too. The address bar
+- Frontend: one round account button right of «Открыть» (abstract user → sign in; avatar/initial → menu); «Поделиться» (bottom of the project panel) asks to sign in first, then a dialog
+  (XHR upload progress → «saving» → link). Someone else's shared model is view-only (`body.view-only`: no pencil, no
+  share; «поделился: <name>»), remembered on the history entry (`viewOnly`, `sharedBy`). The pencil renames locally
+  and, for your own shared model, on the server. The address bar
   mirrors the model on screen (`?s=<id>` or nothing, `setShareUrl`); shared ids live on the history entry (`shareId`).

@@ -103,6 +103,22 @@ body.dragging .open-dlg .zone{border-color:var(--accent);background:color-mix(in
 .is-demo #renameBtn,.renaming #renameBtn{display:none}
 .chev-btn{display:none}
 .title-input{font:inherit;color:inherit;width:100%;padding:2px 6px;margin:-3px 0 -3px -7px;border:1.5px solid var(--accent);border-radius:6px;background:var(--field)}
+.view-only #renameBtn,.view-only .panel .share-btn{display:none!important}
+.acct-btn{flex:none;display:grid;place-items:center;width:36px;height:36px;padding:0;border-radius:50%;border:1.5px solid var(--ink);background:transparent;color:var(--ink);font:inherit;font-weight:600;cursor:pointer;overflow:hidden}
+.acct-btn[hidden]{display:none}
+.acct-btn:hover{background:color-mix(in srgb,var(--ink) 10%,transparent)}
+.acct-btn.in{background:var(--accent);color:#fff}
+.acct-btn .acct-anon{width:22px;height:22px}
+.acct-btn.in .acct-anon{display:none}
+.acct-btn img{width:100%;height:100%;object-fit:cover;display:block}
+.acct-btn img[hidden]{display:none}
+.acct-menu{position:fixed;z-index:4;top:calc(76px + env(safe-area-inset-top,0px));right:16px;width:min(280px,calc(100% - 32px));padding:14px 16px;display:flex;flex-direction:column;gap:2px}
+.acct-menu[hidden]{display:none}
+.acct-menu b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.acct-menu small{color:var(--muted);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:10px}
+.login-dlg{text-align:left}
+.login-dlg h2{padding-right:28px}
+.g-btn{display:flex;justify-content:center;min-height:44px;margin:16px 0 4px}
 .panel .share-btn{display:none;align-items:center;justify-content:center;gap:8px;margin-top:12px}
 .can-share.has-model .panel .share-btn{display:flex}
 .share-btn svg{width:18px;height:18px}
@@ -135,6 +151,7 @@ body.loading .busy{display:grid}
  .top{left:8px;right:8px;top:calc(8px + env(safe-area-inset-top,0px));padding:6px 6px 6px 10px}
  .lg{display:none}
  .tactions .btn{padding:7px 12px}
+ .acct-menu{right:8px;top:calc(70px + env(safe-area-inset-top,0px))}
  .phead h1{cursor:pointer}
  .chev-btn{display:grid}
  .phead .chev{display:block}
