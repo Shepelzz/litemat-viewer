@@ -4,3 +4,4 @@ dist
 *.log
 tools/textures
 .idea
+.env
