@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Litematica → иллюстрация</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🧱</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600&display=swap" rel="stylesheet">
+</head>
+<body>
+<div id="view"></div>
+<div class="drop">
+  <div class="card">
+    <h2>Litematica → иллюстрация</h2>
+    <p>Перетащи сюда файл <b>.litematic</b> — постройка превратится в рисованную 3D-модель. Всё считается в браузере, файл никуда не отправляется.</p>
+    <div class="zone">Отпусти файл здесь</div>
+    <div class="actions">
+      <button class="btn primary" id="pick">Выбрать файл</button>
+      <button class="btn" id="sample">Открыть пример</button>
+    </div>
+    <div class="msg" id="msg" role="status"></div>
+  </div>
+</div>
+<div class="drag-hint">Отпусти, чтобы открыть</div>
+<div class="busy"><div class="card prog" id="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Обработка схематики">
+  <div class="ptop"><span id="pStage">Начинаю</span><b id="pPct">0%</b></div>
+  <div class="track"><div class="bar" id="pBar"></div></div>
+  <div class="pbot"><span id="pName"></span><span id="pEta"></span></div>
+</div></div>
+<input type="file" id="file" accept=".litematic" hidden>
+<div class="panel card" id="panel">
+  <h1 id="title"></h1>
+  <div class="meta" id="meta"></div>
+  <div class="seg" role="group" aria-label="Вид">
+    <button id="mCube" aria-pressed="false">Как в игре</button>
+    <button id="mToon" aria-pressed="true">Стилизовано</button>
+  </div>
+  <div class="row"><label for="cut">Срез снизу <output id="oCut"></output></label><input id="cut" type="range" min="0" step="1" value="0"></div>
+  <label class="check toon-only"><input type="checkbox" id="lines" checked> Контуры</label>
+  <label class="check toon-only"><input type="checkbox" id="shadows" checked> Тени</label>
+  <div class="stats" id="stats"></div>
+  <button class="btn" id="pick2">Открыть другой файл</button>
+  <div class="msg err" id="msg2" role="status"></div>
+</div>
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
