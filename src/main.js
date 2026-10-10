@@ -192,7 +192,10 @@ async function openFile(f){
 }
 $('pick').onclick=$('pick2').onclick=()=>fileIn.click();
 fileIn.onchange=()=>{openFile(fileIn.files[0]);fileIn.value='';};
-$('sample').onclick=async()=>{const res=await fetch(import.meta.env.BASE_URL+'sample.litematic');openBuffer(await res.arrayBuffer(),'upd_plushki');};
+async function openSample(){const res=await fetch(import.meta.env.BASE_URL+'sample.litematic');if(!res.ok)throw new Error(res.status);return openBuffer(await res.arrayBuffer(),'upd_plushki');}
+$('sample').onclick=openSample;
+// demo on first visit; if it can't be fetched, the start screen stays as is
+openSample().catch(e=>console.warn('sample not loaded',e));
 let dragDepth=0;
 addEventListener('dragenter',e=>{e.preventDefault();dragDepth++;document.body.classList.add('dragging');});
 addEventListener('dragleave',e=>{if(--dragDepth<=0){dragDepth=0;document.body.classList.remove('dragging');}});
