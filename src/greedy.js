@@ -1,18 +1,17 @@
 import * as THREE from 'three';
 import {M} from './convert.js';
 import {step} from './progress.js';
+import {GrowBuf,u8} from './buf.js';
 
 // ===== Greedy meshing: merges coplanar faces of equal colour into big rectangles =====
 const ORD_P=[0,1,2,0,2,3],ORD_N=[0,2,1,0,3,2],NRM=[[1,0,0],[0,1,0],[0,0,1]],Q=[0,0,0];
-class FBuf{constructor(n=1<<16){this.a=new Float32Array(n);this.n=0;}
-  grow(k){if(this.n+k>this.a.length){let L=this.a.length*2;while(L<this.n+k)L*=2;const b=new Float32Array(L);b.set(this.a.subarray(0,this.n));this.a=b;}}
-  view(){return this.a.subarray(0,this.n);}}
 export async function greedyMesh(solidOf,occOf,colTop,colSide,p0,p1,label){
   const key=new Map(),cols=[];
-  const cid=c=>{const k=c.getHex();if(!key.has(k)){key.set(k,cols.length);cols.push([c.r,c.g,c.b]);}return key.get(k);};
+  const cid=c=>{const k=c.getHex();if(!key.has(k)){key.set(k,cols.length);cols.push([u8(c.r),u8(c.g),u8(c.b)]);}return key.get(k);};
   const topId=new Int32Array(M.PAL.length),sideId=new Int32Array(M.PAL.length),botId=new Int32Array(M.PAL.length);
   for(let i=0;i<M.PAL.length;i++){topId[i]=cid(colTop[i]);sideId[i]=cid(colSide[i]);botId[i]=cid(colSide[i].clone().multiplyScalar(.85));}
-  const pos=new FBuf(),nor=new FBuf(),col=new FBuf();
+  // compact vertex data: merged faces sit on whole block coordinates (Int16), axis normals (Int8), byte colours
+  const pos=new GrowBuf(Int16Array),nor=new GrowBuf(Int8Array),col=new GrowBuf(Uint8Array);
   const dims=[M.NX,M.NY,M.NZ],lo=[0,M.CUT,0],S=[1,M.NX,M.NX*M.NY];
   const total=2*((M.NX)+(M.NY-M.CUT)+(M.NZ));let done=0;
   for(let d=0;d<3;d++){
@@ -46,7 +45,7 @@ export async function greedyMesh(solidOf,occOf,colTop,colSide,p0,p1,label){
             const cu=bu+((o===1||o===2)?w:0), cv=bv+((o===2||o===3)?h:0);
             Q[d]=plane;Q[u]=cu;Q[v]=cv;
             pos.a[pos.n++]=Q[0];pos.a[pos.n++]=Q[1];pos.a[pos.n++]=Q[2];
-            nor.a[nor.n++]=NRM[d][0]*sign;nor.a[nor.n++]=NRM[d][1]*sign;nor.a[nor.n++]=NRM[d][2]*sign;
+            nor.a[nor.n++]=NRM[d][0]*sign*127;nor.a[nor.n++]=NRM[d][1]*sign*127;nor.a[nor.n++]=NRM[d][2]*sign*127;
             col.a[col.n++]=cc[0];col.a[col.n++]=cc[1];col.a[col.n++]=cc[2];}
           i+=w;
         }
@@ -54,8 +53,8 @@ export async function greedyMesh(solidOf,occOf,colTop,colSide,p0,p1,label){
     }
   }
   const g=new THREE.BufferGeometry();
-  g.setAttribute('position',new THREE.BufferAttribute(pos.view().slice(),3));
-  g.setAttribute('normal',new THREE.BufferAttribute(nor.view().slice(),3));
-  g.setAttribute('color',new THREE.BufferAttribute(col.view().slice(),3));
+  g.setAttribute('position',new THREE.BufferAttribute(pos.trim(),3));
+  g.setAttribute('normal',new THREE.BufferAttribute(nor.trim(),3,true));
+  g.setAttribute('color',new THREE.BufferAttribute(col.trim(),3,true));
   return g;
 }

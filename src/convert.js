@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import {GrowBuf,u8} from './buf.js';
 import COLORS from './colors.json';
 import {step} from './progress.js';
 
@@ -81,20 +82,26 @@ function computeCut(){let last=-1;for(let y=0;y<M.NY;y++){let n=0,nat=0;for(let 
 const occ=(x,y,z)=>{const p=at(x,y,z);return p>=0&&M.KIND[p]==='cube';};
 const hash=(x,y,z)=>{let h=(x*374761393+y*668265263+z*1442695041)|0;h=Math.imul(h^(h>>>13),1274126177);return((h>>>0)%10000)/10000;};
 const DIR={north:[0,-1],south:[0,1],east:[1,0],west:[-1,0]};
+const PLANT_GREEN=new THREE.Color('#7fa65a');
 const LEFT={north:'west',west:'south',south:'east',east:'north'}, RIGHT={north:'east',east:'south',south:'west',west:'north'};
 
 export async function convert(p0,p1){
-  const tri={pos:[],col:[]}, boxes=[], blobs=[];
+  // everything goes into typed buffers (see buf.js): triangles = positions + byte colours; boxes = centre, size,
+  // colour; blobs = centre, radius, colour — no per-item objects
+  const tri={pos:new GrowBuf(Float32Array),col:new GrowBuf(Uint8Array)};
+  const boxes={g:new GrowBuf(Float32Array),c:new GrowBuf(Uint8Array),n:0}, blobs={g:new GrowBuf(Float32Array),c:new GrowBuf(Uint8Array),n:0};
+  const blob=(px,py,pz,r,c)=>{blobs.g.push4(px,py,pz,r);blobs.c.push3(u8(c.r),u8(c.g),u8(c.b));blobs.n++;};
   const V=(x,y,z)=>new THREE.Vector3(x,y,z);
   const pushTri=(a,b,c,col,inside)=>{
     const n=new THREE.Vector3().subVectors(b,a).cross(new THREE.Vector3().subVectors(c,a));
     if(n.lengthSq()<1e-9)return;
     const cen=new THREE.Vector3().add(a).add(b).add(c).multiplyScalar(1/3);
     if(n.dot(cen.sub(inside))<0){const t=b;b=c;c=t;}
-    for(const v of [a,b,c]){tri.pos.push(v.x,v.y,v.z);tri.col.push(col.r,col.g,col.b);}
+    const r=u8(col.r),g=u8(col.g),bl=u8(col.b);
+    for(const v of [a,b,c]){tri.pos.push3(v.x,v.y,v.z);tri.col.push3(r,g,bl);}
   };
-  const box=(x0,y0,z0,x1,y1,z1,c)=>{const m=new THREE.Matrix4().makeScale(Math.max(x1-x0,.001),Math.max(y1-y0,.001),Math.max(z1-z0,.001));
-    m.setPosition((x0+x1)/2,(y0+y1)/2,(z0+z1)/2);boxes.push({m,c});};
+  const box=(x0,y0,z0,x1,y1,z1,c)=>{boxes.g.push3((x0+x1)/2,(y0+y1)/2,(z0+z1)/2);
+    boxes.g.push3(Math.max(x1-x0,.001),Math.max(y1-y0,.001),Math.max(z1-z0,.001));boxes.c.push3(u8(c.r),u8(c.g),u8(c.b));boxes.n++;};
   // box in block-local coords, rotated so that local -z points to `facing`
   const rbox=(x,y,z,facing,u0,y0,w0,u1,y1,w1,c)=>{ // u: across, w: depth from facing side (0) to back (1)
     let X0,X1,Z0,Z1;
@@ -161,7 +168,7 @@ export async function convert(p0,p1){
     case 'layer': box(x,y,z,x+1,y+.125*(+(P.layers||1)),z+1,ct); break;
     case 'plant':{
       const hh=hash(x,y,z);
-      blobs.push({p:V(x+.5,y+.28,z+.5),r:.3+.08*hh,c:ct.clone().lerp(new THREE.Color('#7fa65a'),/(sapling|grass|fern|bush|vine|kelp|seagrass|cane|roots|dripleaf|azalea|lily_pad|crop|wheat|carrots|potatoes|beetroots)/.test(e.n)?.4:0)});
+      blob(x+.5,y+.28,z+.5,.3+.08*hh,ct.clone().lerp(PLANT_GREEN,/(sapling|grass|fern|bush|vine|kelp|seagrass|cane|roots|dripleaf|azalea|lily_pad|crop|wheat|carrots|potatoes|beetroots)/.test(e.n)?.4:0));
       break;}
     case 'slab': if(P.type==='top')box(x,y+.5,z,x+1,y+1,z+1,cs); else box(x,y,z,x+1,y+.5,z+1,cs); break;
     case 'glass': box(x,y,z,x+1,y+1,z+1,cs.clone().lerp(new THREE.Color('#b9d6de'),.6)); break;
@@ -208,7 +215,7 @@ export async function convert(p0,p1){
       let exposed=false; for(const [dx,dy,dz] of [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]]){const q=at(x+dx,y+dy,z+dz);if(q<0||M.KIND[q]==='skip')exposed=true;}
       if(!exposed)break;
       const hh=hash(x,y,z);
-      blobs.push({p:V(x+.5+(hash(y,z,x)-.5)*.3,y+.5+(hash(z,x,y)-.5)*.3,z+.5+(hash(x,z,y)-.5)*.3),r:.72+.22*hh,c:ct.clone().multiplyScalar(.92+.16*hh)});
+      blob(x+.5+(hash(y,z,x)-.5)*.3,y+.5+(hash(z,x,y)-.5)*.3,z+.5+(hash(x,z,y)-.5)*.3,.72+.22*hh,ct.clone().multiplyScalar(.92+.16*hh));
       break;}
     }
   }

@@ -48,6 +48,17 @@ Static web app: drop a `.litematic` file → toon-shaded, ink-outlined 3D illust
   `/demo/`. Showcases look like the demo, appear under Demo in the recent list, aren't saved to history and don't
   change `lastOpened`. Add one = drop the file into `public/` + one line in `showcases.js`.
 
+## Memory (big maps)
+- Loader: palette first → `Uint8Array` grid when ≤256 block states, else `Uint16Array`; packed BlockStates are read
+  in place from the decompressed buffer (NBT long arrays aren't copied); no crop copy when there's nothing to crop.
+- Geometry is built into typed buffers (`src/buf.js`): greedy faces = Int16 positions, Int8 normals, Uint8 colours;
+  converter triangles = Float32 positions + Uint8 colours; boxes/blobs = flat Float32 data, not per-item objects.
+- `freeAfterUpload()`: CPU copies of vertex/instance data are dropped once on the GPU (never read back; rebuilds
+  make new geometry). Don't add code that reads `attribute.array` after the first render.
+- Grids over 40M cells are released after building; a 1-bit occupancy map (`solidAt`) serves the orbit pivot, and
+  `ensureGrid()` re-reads the file (`CUR_BUF`) for the «как в игре» view.
+- Beehive (904×200×1006): live JS memory after load ~50 MB (was ~1.9 GB).
+
 ## Conventions
 - three.js is pinned to 0.147.0 (legacy colour management; colours are authored as displayed). Upgrading needs
   `renderer.outputColorSpace` / `THREE.ColorManagement` review or colours will shift.

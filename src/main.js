@@ -86,8 +86,13 @@ function frameModel(){
   camera.position.copy(controls.target).addScaledVector(new THREE.Vector3(...VIEW.dir).normalize(),VIEW.fitDist);
   controls.update();invalidate();
 }
-function inst(geo,mat,items,fn){const im=new THREE.InstancedMesh(geo,mat,Math.max(items.length,1));im.count=items.length;
-  items.forEach((it,i)=>{const [m,c]=fn(it);im.setMatrixAt(i,m);if(c)im.setColorAt(i,c);});im.castShadow=im.receiveShadow=true;return im;}
+// once a buffer is on the GPU the CPU copy is dead weight (we never read geometry back or edit it in place —
+// a rebuild makes new geometry), so drop it: on big maps that's most of the page's memory
+function releaseArray(){this.array=null;}
+function freeAfterUpload(o){
+  const g=o.geometry;for(const a of Object.values(g.attributes))a.onUpload(releaseArray);g.index?.onUpload(releaseArray);
+  if(o.isInstancedMesh){o.instanceMatrix.onUpload(releaseArray);o.instanceColor?.onUpload(releaseArray);}
+}
 // voxel ray march (Amanatides–Woo) along the view axis; returns the world-space hit point or null
 function surfaceAtCenter(){
   if(!loaded)return null;
@@ -105,8 +110,7 @@ function surfaceAtCenter(){
   for(let a=0;a<3;a++){tD[a]=Math.abs(1/D[a]);const edge=c[a]+(D[a]>0?1:0);tMax[a]=t0+(Math.abs(D[a])<1e-9?Infinity:(edge-P[a])/D[a]);}
   let t=t0;
   for(let i=0;i<4096;i++){
-    const g=M.GRID[c[0]+M.NX*(c[1]+M.NY*c[2])];
-    if(g&&M.KIND[g]!=='skip')return new THREE.Vector3(O[0]+D[0]*t,O[1]+D[1]*t,O[2]+D[2]*t).add(styled.position);
+    if(solidAt(c[0]+M.NX*(c[1]+M.NY*c[2])))return new THREE.Vector3(O[0]+D[0]*t,O[1]+D[1]*t,O[2]+D[2]*t).add(styled.position);
     const a=tMax[0]<tMax[1]?(tMax[0]<tMax[2]?0:2):(tMax[1]<tMax[2]?1:2);
     t=tMax[a];c[a]+=step[a];if(c[a]<0||c[a]>=N[a])return null;tMax[a]+=tD[a];
   }
@@ -115,7 +119,7 @@ function surfaceAtCenter(){
 // ===== Chunks: split geometry into CH×CH columns so off-screen parts are culled (main, outline and shadow passes) =====
 const CH=32;
 const chunkKey=(x,z)=>Math.floor(x/CH)+','+Math.floor(z/CH);
-// non-indexed geometry → one geometry per chunk, by triangle centroid
+// non-indexed geometry → one geometry per chunk, by triangle centroid (keeps each attribute's array type)
 function splitGeometry(g){
   const P=g.attributes.position.array,names=Object.keys(g.attributes),n=P.length/9,buckets=new Map();
   for(let t=0;t<n;t++){const o=t*9,k=chunkKey((P[o]+P[o+3]+P[o+6])/3,(P[o+2]+P[o+5]+P[o+8])/3);
@@ -123,34 +127,43 @@ function splitGeometry(g){
   const out=[];
   for(const tris of buckets.values()){
     const ng=new THREE.BufferGeometry();
-    for(const a of names){const src=g.attributes[a].array,dst=new Float32Array(tris.length*9);
+    for(const a of names){const at=g.attributes[a],src=at.array,dst=new src.constructor(tris.length*9);
       for(let i=0;i<tris.length;i++)dst.set(src.subarray(tris[i]*9,tris[i]*9+9),i*9);
-      ng.setAttribute(a,new THREE.BufferAttribute(dst,3));}
+      ng.setAttribute(a,new THREE.BufferAttribute(dst,3,at.normalized));}
     ng.computeBoundingSphere();out.push(ng);
   }
   g.dispose();return out;
 }
-function addChunked(group,g,mat){for(const cg of splitGeometry(g)){const m=new THREE.Mesh(cg,mat);m.castShadow=m.receiveShadow=true;group.add(m);}}
-// instanced items (pos at it.p or matrix it.m) → one InstancedMesh per chunk with a bounding sphere around its instances
-function addInstChunked(group,geo,mat,items,fn,posOf){
-  const buckets=new Map();
-  for(const it of items){const p=posOf(it),k=chunkKey(p.x,p.z);let b=buckets.get(k);if(!b)buckets.set(k,b=[]);b.push(it);}
-  const box=new THREE.Box3(),v=new THREE.Vector3();
+function addChunked(group,g,mat){for(const cg of splitGeometry(g)){const m=new THREE.Mesh(cg,mat);m.castShadow=m.receiveShadow=true;freeAfterUpload(m);group.add(m);}}
+// instanced items → one InstancedMesh per chunk with a bounding sphere around its instances.
+// items: {n, g: Float32 per-item data (stride), c: Uint8 rgb}; centre = g[i*stride..+2]; setMatrix(i, mat4 array, offset)
+function addInstChunked(group,geo,mat,items,stride,idxs,setMatrix){
+  const G=items.g.a,buckets=new Map();
+  for(const i of idxs){const o=i*stride,k=chunkKey(G[o],G[o+2]);let b=buckets.get(k);if(!b)buckets.set(k,b=[]);b.push(i);}
+  const box=new THREE.Box3(),v=new THREE.Vector3(),C=items.c.a;
   for(const list of buckets.values()){
-    const cg=geo.clone();box.makeEmpty();for(const it of list)box.expandByPoint(v.copy(posOf(it)));
+    const cg=geo.clone();box.makeEmpty();
+    const im=new THREE.InstancedMesh(cg,mat,list.length),M4=im.instanceMatrix.array,col=new Uint8Array(list.length*3);
+    list.forEach((i,j)=>{const o=i*stride;box.expandByPoint(v.set(G[o],G[o+1],G[o+2]));setMatrix(i,M4,j*16);col.set(C.subarray(i*3,i*3+3),j*3);});
+    im.instanceColor=new THREE.InstancedBufferAttribute(col,3,true);
     cg.boundingSphere=box.getBoundingSphere(new THREE.Sphere());cg.boundingSphere.radius+=2;
-    const im=inst(cg,mat,list,fn);im.frustumCulled=true; // three r147 turns culling off for InstancedMesh; our sphere covers the chunk
-    group.add(im);
+    im.frustumCulled=true; // three r147 turns culling off for InstancedMesh; our sphere covers the chunk
+    im.castShadow=im.receiveShadow=true;freeAfterUpload(im);group.add(im);
   }
   geo.dispose();
 }
+// Int8 normalized normals (4× smaller than float) from a float normal attribute
+function packNormals(g){const a=g.attributes.normal.array,q=new Int8Array(a.length);for(let i=0;i<a.length;i++)q[i]=Math.round(a[i]*127);
+  g.setAttribute('normal',new THREE.BufferAttribute(q,3,true));}
 let triCount=0, rawDirty=true;
 async function buildRaw(){ // 'as in game' view, built on demand
   if(!rawDirty)return; rawDirty=false; clear(cubes);
+  await ensureGrid();
   const solid=new Uint8Array(M.PAL.length);for(let i=0;i<M.PAL.length;i++)solid[i]=M.KIND[i]==='skip'?0:1;
   const ct=M.PAL.map(e=>new THREE.Color(e.t)),cs=M.PAL.map(e=>new THREE.Color(e.s));
   const g=await greedyMesh(solid,solid,ct,cs,0,1,'Готовлю вид «как в игре»');
   addChunked(cubes,g,new THREE.MeshLambertMaterial({vertexColors:true}));
+  releaseGrid();
 }
 function clear(g){for(const ch=[...g.children];ch.length;){const o=ch.pop();g.remove(o);o.geometry.dispose();}}
 let buildId=0;
@@ -162,10 +175,12 @@ async function rebuild(p0=0,p1=1){
   if(my!==buildId)return false;
   await step(p0+(p1-p0)*0.82,'Собираю сцену',true);
   const toonMat=toon({vertexColors:true});
-  if(s.tri.pos.length){const g=new THREE.BufferGeometry();
-    g.setAttribute('position',new THREE.Float32BufferAttribute(s.tri.pos,3));
-    g.setAttribute('color',new THREE.Float32BufferAttribute(s.tri.col,3));
-    g.computeVertexNormals();
+  const triVerts=s.tri.pos.n/3;
+  if(triVerts){const g=new THREE.BufferGeometry();
+    g.setAttribute('position',new THREE.BufferAttribute(s.tri.pos.trim(),3));
+    g.setAttribute('color',new THREE.BufferAttribute(s.tri.col.trim(),3,true));
+    s.tri=null; // let the working buffers go before the next big allocations
+    g.computeVertexNormals();packNormals(g);
     addChunked(styled,g,toonMat);}
   const solidT=new Uint8Array(M.PAL.length),occT=new Uint8Array(M.PAL.length);
   for(let i=0;i<M.PAL.length;i++){solidT[i]=occT[i]=M.KIND[i]==='cube'?1:0;}
@@ -174,18 +189,21 @@ async function rebuild(p0=0,p1=1){
   const ggTris=gg.attributes.position.count/3;
   addChunked(styled,gg,toonMat);
   await step(p0+(p1-p0)*0.96,'Собираю сцену',true);
-  const _t=new THREE.Vector3();
-  if(s.boxes.length)addInstChunked(styled,new THREE.BoxGeometry(1,1,1),toon({color:0xffffff}),s.boxes,o=>[o.m,o.c],o=>_t.setFromMatrixPosition(o.m));
-  // level of detail for foliage on big maps
-  let blobs=s.blobs, det=2;
-  if(blobs.length>60000){blobs=blobs.filter(o=>hash(o.p.x|0,o.p.y|0,o.p.z|0)<0.5);for(const o of blobs)o.r*=1.22;}
-  det=blobs.length>40000?0:blobs.length>12000?1:2;
+  // boxes: centre + size (stride 6) → scale/translate matrix
+  const B=s.boxes,BG=B.g.a,boxN=B.n;
+  if(boxN)addInstChunked(styled,new THREE.BoxGeometry(1,1,1),toon({color:0xffffff}),B,6,Array.from({length:boxN},(_,i)=>i),(i,m,o)=>{const k=i*6;
+    m.fill(0,o,o+16);m[o]=BG[k+3];m[o+5]=BG[k+4];m[o+10]=BG[k+5];m[o+12]=BG[k];m[o+13]=BG[k+1];m[o+14]=BG[k+2];m[o+15]=1;});
+  // level of detail for foliage on big maps: blobs = centre + radius (stride 4)
+  const L=s.blobs,LG=L.g.a;let keep=Array.from({length:L.n},(_,i)=>i),grow=1,det=2;
+  if(keep.length>60000){keep=keep.filter(i=>hash(LG[i*4]|0,LG[i*4+1]|0,LG[i*4+2]|0)<0.5);grow=1.22;}
+  det=keep.length>40000?0:keep.length>12000?1:2;
   const blob=new THREE.IcosahedronGeometry(1,det);
   // sphere normals on every detail level: low-poly blobs otherwise get flat facets, which the outline pass inks as edges
   {const P=blob.attributes.position,N=blob.attributes.normal,v=new THREE.Vector3();for(let i=0;i<P.count;i++){v.fromBufferAttribute(P,i).normalize();N.setXYZ(i,v.x,v.y,v.z);}N.needsUpdate=true;}
   const blobTris=blob.attributes.position.count/3;
-  if(blobs.length)addInstChunked(styled,blob,toon({color:0xffffff}),blobs,o=>[new THREE.Matrix4().compose(o.p,new THREE.Quaternion(),new THREE.Vector3(o.r,o.r*.9,o.r)),o.c],o=>o.p);
-  triCount=s.tri.pos.length/9+ggTris+s.boxes.length*12+blobs.length*blobTris;
+  if(keep.length)addInstChunked(styled,blob,toon({color:0xffffff}),L,4,keep,(i,m,o)=>{const k=i*4,r=LG[k+3]*grow;
+    m.fill(0,o,o+16);m[o]=r;m[o+5]=r*.9;m[o+10]=r;m[o+12]=LG[k];m[o+13]=LG[k+1];m[o+14]=LG[k+2];m[o+15]=1;});
+  triCount=triVerts/3+ggTris+boxN*12+keep.length*blobTris;
   rawDirty=true; if(st.mode==='cube') await buildRaw();
   sync();
 }
@@ -275,11 +293,27 @@ function resize(){
   rtColor.setSize(dw,dh);rtNormal.setSize(dw,dh);post.uniforms.res.value.set(dw,dh);post.uniforms.px.value=renderer.getPixelRatio();
 }
 addEventListener('resize',resize);resize();
+// ===== Grid memory on big maps =====
+// The block grid (1–2 bytes per cell, air included) is only needed to build geometry. After that the viewer only asks
+// "is there a block here?" (orbit pivot), so big maps keep a 1-bit occupancy map instead and re-read the file if the
+// grid is needed again ("as in game" view).
+const GRID_KEEP_CELLS=40e6;
+let SOLID=null,CUR_BUF=null; // CUR_BUF: the open .litematic (compressed), to re-read the grid on demand
+const solidAt=i=>M.GRID?(M.GRID[i]&&M.KIND[M.GRID[i]]!=='skip'):SOLID?(SOLID[i>>>3]>>(i&7))&1:0;
+function releaseGrid(){
+  const G=M.GRID,n=G.length;if(n<GRID_KEEP_CELLS)return;
+  const skip=M.KIND.map(k=>k==='skip'),bits=new Uint8Array((n+7)>>>3);
+  for(let i=0;i<n;i++)if(!skip[G[i]])bits[i>>>3]|=1<<(i&7);
+  SOLID=bits;M.GRID=null;
+}
+async function ensureGrid(){if(!M.GRID&&CUR_BUF)M.GRID=(await readLitematic(CUR_BUF)).grid;}
 async function loadModel(m,label){
+  SOLID=null;
   setModel(m); M.CUT=0; loaded=true; // always show the full schematic, ground included
   $('title').textContent=m.name||label||'Схематика';
   $('meta').textContent=[m.author&&('автор: '+m.author),`${M.NX}×${M.NY}×${M.NZ}`].filter(Boolean).join(', ');
   await rebuild(0.42,0.97); frameModel();
+  if(st.mode!=='cube')releaseGrid();
   await step(0.99,'Рисую',true);
   document.body.classList.add('has-model');
 }
@@ -390,7 +424,7 @@ function clearErr(){$('msg').textContent='';$('msg2').textContent='';$('msg3').t
 async function openBuffer(buf,label,src={}){
   clearErr();startProgress(label);
   let m;
-  try{m=await readLitematic(buf);await loadModel(m,label);}
+  try{m=await readLitematic(buf);CUR_BUF=buf;await loadModel(m,label);}
   catch(e){console.error(e);showErr(e.message||'Не удалось прочитать файл');return false;}
   finally{stopProgress();}
   const sc=src.showcase&&SHOWCASES[src.showcase];
