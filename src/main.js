@@ -434,8 +434,9 @@ try{DEMO.thumb=localStorage.getItem('demoThumb')||null;}catch{}
 async function openSample(){const res=await fetch(import.meta.env.BASE_URL+'sample.litematic');if(!res.ok)throw new Error(res.status);return openBuffer(await res.arrayBuffer(),'upd_plushki',{demo:true});}
 // showcase page (/<key>/): its build is fetched from the site root (dev has no <base>, hence the absolute path)
 const SHOWCASE=Object.keys(SHOWCASES).find(k=>new RegExp(`/${k}/?$`).test(location.pathname));
+const asset=f=>(import.meta.env.DEV?'/':import.meta.env.BASE_URL)+f; // site-root file, also from a showcase page
 async function openShowcase(key){const s=SHOWCASES[key];
-  const res=await fetch((import.meta.env.DEV?'/':import.meta.env.BASE_URL)+s.file);if(!res.ok)throw new Error(res.status);
+  const res=await fetch(asset(s.file));if(!res.ok)throw new Error(res.status);
   return openBuffer(await res.arrayBuffer(),s.title,{showcase:key});}
 $('sample').onclick=()=>openSample().catch(()=>showErr('Не удалось загрузить пример'));
 async function openFromHistory(id){
@@ -468,9 +469,10 @@ function row(e,isDemo){
 }
 async function renderMenu(){
   const items=await hist.list().catch(()=>[]);
-  const ul=$('histList');ul.replaceChildren(row(DEMO,true));
+  // examples: a thumbnail made in this browser if there is one, else the shipped picture
+  const ul=$('histList');ul.replaceChildren(row({...DEMO,thumb:DEMO.thumb||asset('thumbs/demo.jpg')},true));
   for(const [key,s] of Object.entries(SHOWCASES)){let thumb=null;try{thumb=localStorage.getItem('thumb:'+key)||null;}catch{}
-    ul.append(row({key,name:s.title,dims:s.dims,thumb},true));}
+    ul.append(row({key,name:s.title,dims:s.dims,thumb:thumb||(s.thumb&&asset(s.thumb))},true));}
   if(items.length){const h=document.createElement('li');h.className='hsep';h.textContent='Мои файлы';ul.append(h);}
   for(const e of items)ul.append(row(e,false));
   $('histEmpty').hidden=items.length>0;
@@ -489,8 +491,8 @@ addEventListener('keydown',e=>{if(e.key==='Escape')closeMenu();});
   let last=null;try{last=localStorage.getItem('lastOpened');}catch{}
   if(last&&last!=='demo'&&await openFromHistory(last).catch(()=>false))return;
   clearErr();
-  openSample().catch(e=>console.warn('sample not loaded',e));
-})();
+  await openSample().catch(e=>console.warn('sample not loaded',e));
+})().finally(()=>document.body.classList.remove('booting')); // the «open a file» card only if nothing could be shown
 // collapsible settings panel
 const panel=$('panel');
 function setCollapsed(c){panel.classList.toggle('collapsed',c);$('pToggle').setAttribute('aria-expanded',String(!c));}

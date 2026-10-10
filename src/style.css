@@ -29,6 +29,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .drop{position:fixed;inset:0;display:grid;place-items:center;padding:84px 24px 24px;pointer-events:none}
 .drop .card{pointer-events:auto;width:min(440px,100%);padding:28px 28px 24px;text-align:center}
 .has-model .drop{display:none}
+.booting .drop{display:none} /* while the first model loads, show only the progress, not the «open a file» card */
 .drop h2{font-size:26px;line-height:1.15;font-weight:600;margin:0 0 10px;letter-spacing:-.015em}
 .drop p{margin:0 0 18px;color:var(--muted);line-height:1.5}
 .drop .actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
