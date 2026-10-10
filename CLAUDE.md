@@ -29,7 +29,7 @@ Static web app: drop a `.litematic` file → toon-shaded, ink-outlined 3D illust
 - Shadow map: `renderer.shadowMap.autoUpdate=false`; `fitShadow()` fits the shadow frustum to what's on screen and
   sets `needsUpdate` only when that frustum changes.
 - Render size capped at ~5 MP (`resize()`), since every frame is 3 full-screen passes.
-- Controls: left drag / one finger = pan, right drag / two fingers = rotate; orbit pivot snaps to the block surface on
+- Controls: mouse/trackpad left drag = pan, right drag = rotate; touch: one finger = rotate, two = pinch/pan; orbit pivot snaps to the block surface on
   the camera axis at the start of each gesture (`surfaceAtCenter`).
 - Dev only: `window.viewer` = {controls, camera, M, renderer, sun, scene, styled, invalidate, surfaceAtCenter}.
 

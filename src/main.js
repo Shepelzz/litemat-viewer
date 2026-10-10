@@ -19,9 +19,10 @@ const scene=new THREE.Scene(); scene.background=BG;
 const camera=new THREE.OrthographicCamera(-1,1,1,-1,1,600);
 const controls=new OrbitControls(camera,renderer.domElement);
 controls.enableDamping=true; controls.maxPolarAngle=Math.PI*0.48; controls.minZoom=0.5; controls.maxZoom=6;
-// drag (one finger / left button / trackpad click) moves the map; right button / two-finger click rotates
+// mouse/trackpad: drag (left button / trackpad click) moves the map, right button / two-finger click rotates.
+// touch screens keep the OrbitControls default: one finger rotates, two fingers pinch-zoom and pan
 controls.mouseButtons={LEFT:THREE.MOUSE.PAN,MIDDLE:THREE.MOUSE.DOLLY,RIGHT:THREE.MOUSE.ROTATE};
-controls.touches={ONE:THREE.TOUCH.PAN,TWO:THREE.TOUCH.DOLLY_ROTATE};
+controls.touches={ONE:THREE.TOUCH.ROTATE,TWO:THREE.TOUCH.DOLLY_PAN};
 controls.rotateSpeed=0.5; controls.dampingFactor=0.2; // half-screen drag ≈ 90°, short inertia
 // render on demand: nothing is drawn while the view is still
 let dirty=true;const invalidate=()=>{dirty=true;};
