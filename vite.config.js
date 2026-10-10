@@ -5,10 +5,24 @@ import { defineConfig } from 'vite';
 const SITE_URL = (process.env.SITE_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '');
 const siteUrl = { name: 'site-url', transformIndexHtml: html => html.replaceAll('__SITE_URL__', SITE_URL) };
 
+// /demo/ — a second URL for the same page, so link previews can be shared on a fresh address
+// (Telegram caches previews per URL). <base href="../"> makes assets and sample.litematic load from the root.
+const demoPage = {
+  name: 'demo-page', enforce: 'post',
+  generateBundle(_, bundle) {
+    const html = bundle['index.html']?.source;
+    if (typeof html !== 'string') return;
+    const demo = html
+      .replace('<head>', '<head>\n<base href="../">')
+      .replace(`property="og:url" content="${SITE_URL}/"`, `property="og:url" content="${SITE_URL}/demo/"`);
+    this.emitFile({ type: 'asset', fileName: 'demo/index.html', source: demo });
+  },
+};
+
 // base: './' makes the build work from any path (domain root, GitHub Pages subfolder, file share)
 export default defineConfig({
   base: './',
-  plugins: [siteUrl],
+  plugins: [siteUrl, demoPage],
   server: { port: 5173, host: true },
   preview: { port: 4173, host: true },
   build: { target: 'es2020', chunkSizeWarningLimit: 1200 },
