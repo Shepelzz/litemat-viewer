@@ -1,12 +1,9 @@
 # litematica-viewer
 
-Web app: drop a `.litematic` file → toon-shaded, ink-outlined 3D illustration. Rendering is 100% client-side;
-a small Express server (`server/`) serves `dist/` and the share API backed by MySQL.
+Static web app: drop a `.litematic` file → toon-shaded, ink-outlined 3D illustration. 100% client-side, no backend.
 
 ## Commands
-- `npm run dev` — dev server on :5173 (proxies `/api` to :5231)
-- `npm run api` — share server on :5231 (`server/index.js`; reads `.env`, see `.env.example`)
-- `npm start` — production: serves `dist/` + API on `$PORT`
+- `npm run dev` — dev server on :5173
 - `npm run build` — production build to `dist/` (relative paths, `base: './'`)
 - `npm run preview` — serve `dist/` on :4173
 - `python3 tools/build_colors.py <mc-version>` — regenerate `src/colors.json`
@@ -50,22 +47,4 @@ a small Express server (`server/`) serves `dist/` and the share API backed by My
   `renderer.outputColorSpace` / `THREE.ColorManagement` review or colours will shift.
 - Add support for a new block shape: add a kind in `classify()` and a `case` in `convert()`;
   use `box()` / `rbox()` (facing-relative) helpers for cuboids.
-- Files leave the browser only through «Поделиться» (explicit click). Keep it that way.
-
-## Sharing (server/)
-- Google sign-in (`server/auth.js`, like sea-battle): GIS on the page → `POST /api/auth/google {credential}` → user in
-  `litemat_app_users` (id = 'g' + sha256(sub)), session token in `litemat_app_sessions` + httpOnly cookie `lm_session`.
-  Sharing needs MySQL **and** `GOOGLE_CLIENT_ID`; `/api/config` → `{share, maxBytes, googleClientId}`.
-- `POST /api/shares?name=` (signed in) → `{id, updated}`; id is random (16 hex). Same user + same name + same size →
-  that row is overwritten and keeps its id. `PATCH /api/shares/:id {name}` renames (owner only).
-  `GET /api/shares/:id` → bytes + `X-Name`, `X-Author` (sharer's Google name), `X-Mine` (viewer owns it). `GET /api/config` → `{share, maxBytes}`; the page shows the button only
-  when `share` is true. `GET /?s=:id` injects the model name into og/twitter titles.
-- DB env like our other Render apps: `DATABASE_URL` or `DB_HOST/DB_PORT/DB_USER/DB_PASSWORD/DB_NAME`, `DB_SSL`, `DB_POOL`.
-  No env or no connection → sharing off, server keeps running.
-- Tables are prefixed `litemat_app_` (shared database); `uploader` (IP hash) from migration 002 is unused since 003. Schema changes = new entry in `server/migrations.js`
-  (never edit an applied one); applied ids are stored in `litemat_app_migrations`.
-- Frontend: one round account button right of «Открыть» (abstract user → sign in; avatar/initial → menu); «Поделиться» (bottom of the project panel) asks to sign in first, then a dialog
-  (XHR upload progress → «saving» → link). Someone else's shared model is view-only (`body.view-only`: no pencil, no
-  share; «поделился: <name>»), remembered on the history entry (`viewOnly`, `sharedBy`). The pencil renames locally
-  and, for your own shared model, on the server. The address bar
-  mirrors the model on screen (`?s=<id>` or nothing, `setShareUrl`); shared ids live on the history entry (`shareId`).
+- Keep everything client-side: files must never be uploaded anywhere.
